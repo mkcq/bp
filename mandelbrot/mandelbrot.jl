@@ -23,8 +23,8 @@ Be patient.
 
 using GLMakie
 
-MAX_ITERS = 1000
-GRID_RESOLUTION = 10000
+MAX_ITERS = 100
+GRID_RESOLUTION = 1000
 xmin = -1.7
 xmax = 0.7
 ymin = -1.2
