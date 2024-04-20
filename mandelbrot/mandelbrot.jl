@@ -21,35 +21,66 @@ It is a large package and it can take some time to install and to generate the f
 Be patient.
 =#
 
-using GLMakie
+using LinearAlgebra
+using MPIClusterManagers
+using Distributed
 
-MAX_ITERS = 100
-GRID_RESOLUTION = 1000
-xmin = -1.7
-xmax = 0.7
-ymin = -1.2
-ymax = 1.2
+NUM_RANKS = 4
 
-function mandel(x, y, max_iters)
-    z = Complex(x, y)
-    c = z
-    threshold = 2
-    for n in 1:max_iters
-        if abs(z) > threshold
-            return n - 1
+# Create workers that can call MPI functions
+if procs() == workers()
+    manager = MPIWorkerManager(NUM_RANKS)
+    addprocs(manager)
+end
+
+@everywhere workers() begin
+    using MPI
+    using GLMakie
+
+    function mandel(x, y, max_iters)
+        z = Complex(x, y)
+        c = z
+        threshold = 2
+        for n in 1:max_iters
+            if abs(z) > threshold
+                return n - 1
+            end
+            z = z^2 + c
         end
-        z = z^2 + c
+        max_iters
     end
-    max_iters
-end
 
-function plotMandel()
-    xAxis = LinRange(xmin, xmax, GRID_RESOLUTION)
-    yAxis = LinRange(ymin, ymax, GRID_RESOLUTION)
+    MPI.Init()
+    comm = MPI.Comm_dup(MPI.COMM_WORLD)
+    nranks = MPI.Comm_size(comm)
+    rank = MPI.Comm_rank(comm)
+    # println("Hello, I am process $rank of $nranks processes!")
+    root = 0
+
+    GRID_RESOLUTION = 1001
+    MAX_ITERS = 100
+    xmin = -1.7
+    xmax = 0.7
+    ymin = -1.2
+    ymax = 1.2
     
-    data = [mandel(x, y, MAX_ITERS) for x in xAxis, y in yAxis]
-    p = heatmap(data)
-    save("mandelbrot.png", p)
-end
+    # Divide rows to calculate by number of workers
+    nRowsR = GRID_RESOLUTION ÷ nranks
+    lb = 1 + (myid() - 2) * nRowsR
+    ub = (myid() - 1) * nRowsR
+    # println("Rank $rank will compute rows $lb until $ub")
 
-plotMandel()
+    cols = LinRange(ymin, ymax, GRID_RESOLUTION)
+    xAxis = LinRange(xmin, xmax, GRID_RESOLUTION)
+    rows = LinRange(xAxis[lb], xAxis[ub], nRowsR)
+    snd = [mandel(r, c, MAX_ITERS) for r in rows, c in cols]
+    rcv = MPI.Gather(snd, comm;root)
+    MPI.Barrier(comm)
+    
+    if rank == root
+        @show typeof(rcv)
+        @show size(rcv)
+        # p = heatmap(rcv)
+        # save("mandelbrot2.png", p)
+    end
+end
