@@ -76,7 +76,9 @@ end
     snd = [mandel(r, c, MAX_ITERS) for r in rows, c in cols]
     rcv = MPI.Gather(snd, comm;root)
     MPI.Barrier(comm)
-    
+
+    # type of rcv should be a matrix Matrix{Int64} of (1000, 1000)
+
     if rank == root
         @show typeof(rcv)
         @show size(rcv)
