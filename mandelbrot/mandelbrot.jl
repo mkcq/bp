@@ -17,14 +17,6 @@ function mandel(x, y, max_iters)
     max_iters
 end
 
-function plotMandel()
-    xAxis = LinRange(xmin, xmax, GRID_RESOLUTION)
-    yAxis = LinRange(ymin, ymax, GRID_RESOLUTION)
-    data = [mandel(x, y, MAX_ITERS) for x in xAxis, y in yAxis]
-    p = heatmap(data)
-    save("mandelbrot2.png", p)
-end
-
 MPI.Init()
 comm = MPI.Comm_dup(MPI.COMM_WORLD)
 nranks = MPI.Comm_size(comm)
@@ -43,12 +35,10 @@ lb = 1 + (rank - 1) * rows_w + rows_w
 ub = rank * rows_w + rows_w
 # println("Rank $rank computes [$lb:$ub]\n")
 
-cols = LinRange(ymin, ymax, GRID_RES)
-rows = LinRange(xmin, xmax, GRID_RES)
-# rows = LinRange(xaxis[lb], xaxis[ub], GRID_RES)
-# println("Rank $rank computes cols = $cols and rows = $(rows[lb:ub])\n")
+rows = LinRange(ymin, ymax, GRID_RES)
+cols = LinRange(xmin, xmax, GRID_RES)
 
-snd = [mandel(r, c, MAX_ITER) for r in rows, c in cols[lb:ub]]
+snd = [mandel(c, r, MAX_ITER) for c in cols, r in rows[lb:ub]]
 rcv = MPI.Gather(snd, comm;root=ROOT)
 if rank == ROOT
     temp = rcv
