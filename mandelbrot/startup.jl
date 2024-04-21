@@ -1,5 +1,5 @@
 using MPI
-PROCS = 2
+PROCS = 4
 FILE = "mandelbrot.jl"
 mpiexec(cmd->run(`$cmd -np $PROCS julia --project=. $FILE`));
 

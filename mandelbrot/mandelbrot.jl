@@ -44,13 +44,12 @@ ub = rank * rows_w + rows_w
 # println("Rank $rank computes [$lb:$ub]\n")
 
 cols = LinRange(ymin, ymax, GRID_RES)
-xaxis = LinRange(xmin, xmax, GRID_RES)
-rows = LinRange(xaxis[lb], xaxis[ub], rows_w)
-# println("Rank $rank computes cols = $cols and rows = $rows\n")
+rows = LinRange(xmin, xmax, GRID_RES)
+# rows = LinRange(xaxis[lb], xaxis[ub], GRID_RES)
+# println("Rank $rank computes cols = $cols and rows = $(rows[lb:ub])\n")
 
-snd = [mandel(r, c, MAX_ITER) for r in rows, c in cols]
+snd = [mandel(r, c, MAX_ITER) for r in rows, c in cols[lb:ub]]
 rcv = MPI.Gather(snd, comm;root=ROOT)
-
 if rank == ROOT
     temp = rcv
     m = Matrix{Int64}(undef, GRID_RES, GRID_RES)
