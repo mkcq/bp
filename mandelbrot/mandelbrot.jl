@@ -57,7 +57,7 @@ end
     # println("Hello, I am process $rank of $nranks processes!")
     root = 0
 
-    GRID_RESOLUTION = 1001
+    GRID_RESOLUTION = 1000
     MAX_ITERS = 100
     xmin = -1.7
     xmax = 0.7
@@ -74,15 +74,35 @@ end
     xAxis = LinRange(xmin, xmax, GRID_RESOLUTION)
     rows = LinRange(xAxis[lb], xAxis[ub], nRowsR)
     snd = [mandel(r, c, MAX_ITERS) for r in rows, c in cols]
-    rcv = MPI.Gather(snd, comm;root)
-    MPI.Barrier(comm)
+    
+    # @show typeof(snd), size(snd)
+    
+    # rcv = MPI.Gather(snd, comm;root)
+
+    # MPI.Barrier(comm)
 
     # type of rcv should be a matrix Matrix{Int64} of (1000, 1000)
 
     if rank == root
-        @show typeof(rcv)
-        @show size(rcv)
+        global res = snd
+        # @show nranks
+        rcv = Ref(0)
+        @show typeof(res), size(res)
+        
+        MPI.Recv!(rcv, comm;source=1, tag=0)
+        res = vcat(res, rcv)
+        @show typeof(res), size(res)
+
+        # for i in 1:(nranks-1)
+        #     res = vcat(res, MPI.Recv!(rcv, comm;source=i, tag=0)) 
+        # end
+        @show typeof(res), size(res)
+
+        # @show typeof(rcv)
+        # @show size(rcv)
         # p = heatmap(rcv)
         # save("mandelbrot2.png", p)
+    else
+        MPI.Send(snd, comm;dest=root, tag=0)
     end
 end
