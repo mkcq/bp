@@ -22,7 +22,6 @@ comm = MPI.Comm_dup(MPI.COMM_WORLD)
 nranks = MPI.Comm_size(comm)
 rank = MPI.Comm_rank(comm)
 size = MPI.Comm_size(comm)
-# println("Rank $rank of ranks $nranks ")
 
 ROOT = 0
 GRID_RES = 1000
@@ -33,7 +32,6 @@ xmin = -1.7; xmax = 0.7; ymin = -1.2; ymax = 1.2
 rows_w = GRID_RES ÷ nranks + (GRID_RES % nranks > rank)
 lb = 1 + (rank - 1) * rows_w + rows_w
 ub = rank * rows_w + rows_w
-# println("Rank $rank computes [$lb:$ub]\n")
 
 rows = LinRange(ymin, ymax, GRID_RES)
 cols = LinRange(xmin, xmax, GRID_RES)
