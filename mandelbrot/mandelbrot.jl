@@ -56,9 +56,8 @@ if rank == ROOT
     for (i, v) in enumerate(temp)
         m[i] = v
     end
-    tm = transpose(m)
-    p = heatmap(tm)
-    save("mandelbrot2.png", p)
+    p = heatmap(m)
+    save("mandelbrot-mpi.png", p)
 end
 
 #=
