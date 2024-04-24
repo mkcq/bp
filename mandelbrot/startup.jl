@@ -5,33 +5,13 @@ using StatsPlots
 
 PROCS = [1, 2, 4, 8]
 FILE = "mandelbrot.jl"
+timings = [;]
+GRID_RES = 1_000 # Higher value improves resolution
+MAX_ITER = 1_000_000 # Higher value improves accuracy
 
-suite = BenchmarkGroup()
-suite["gres-1K"] = BenchmarkGroup()
-suite["gres-1K"]["proc-1"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[1]) julia --project=. $FILE 1000 100`));
-suite["gres-1K"]["proc-2"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[2]) julia --project=. $FILE 1000 100`));
-suite["gres-1K"]["proc-4"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[3]) julia --project=. $FILE 1000 100`));
-suite["gres-1K"]["proc-8"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[4]) julia --project=. $FILE 1000 100`));
-
-# suite["gres-10K"] = BenchmarkGroup()
-# suite["gres-10K"]["proc-1"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[1]) julia --project=. $FILE 10000 100`));
-# suite["gres-10K"]["proc-2"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[2]) julia --project=. $FILE 10000 100`));
-# suite["gres-10K"]["proc-4"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[3]) julia --project=. $FILE 10000 100`));
-# suite["gres-10K"]["proc-8"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[4]) julia --project=. $FILE 10000 100`));
-
-suite["gres-10K"] = BenchmarkGroup()
-suite["gres-10K"]["proc-1"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[1]) julia --project=. $FILE 10000 1000`));
-suite["gres-10K"]["proc-2"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[2]) julia --project=. $FILE 10000 1000`));
-suite["gres-10K"]["proc-4"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[3]) julia --project=. $FILE 10000 1000`));
-suite["gres-10K"]["proc-8"] = @benchmarkable mpiexec(cmd->run(`$cmd -np $(PROCS[4]) julia --project=. $FILE 10000 1000`));
-
-results = run(suite, verbose = true)
-m = median(results)
-println(m)
-
-# println("suite.data ", suite.data)
-# println("suite.tags ", suite.tags)
-
-# plot(results)
-# savefig("benchmarks.png")
-BenchmarkTools.save("benchmarks.json", results)
+for (i, v) in enumerate(PROCS)
+    println("procs: $v")
+    t = @elapsed mpiexec(cmd->run(`$cmd -np $v julia --project=. $FILE $GRID_RES $MAX_ITER`));
+    push!(timings, (v, t))
+end
+display(timings)
