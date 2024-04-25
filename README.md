@@ -39,3 +39,12 @@ The assignment by Arturo Gonzalez-Escribano and Jorge Fernandez-Fabeiro is menti
 - https://tcpp.cs.gsu.edu/curriculum/?q=system/files/fireAgents.zip (download)
 
 Although an interesting topic, unfortunately at the time of writing (25-04-2024) all the necessary materials for the assignment were not included/could not be found.
+
+## Citations/References
+- Simon Byrne, Lucas C. Wilcox, and Valentin Churavy (2021) "MPI.jl: Julia bindings for the Message Passing Interface". JuliaCon Proceedings, 1(1), 68, doi: 10.21105/jcon.00068
+- H. Bal, et al.,"A Medium-Scale Distributed System for Computer Science Research: Infrastructure for the Long Term" in Computer, vol. 49, no. 05, pp. 54-63, 2016.
+doi: 10.1109/MC.2016.127
+keywords: {programming;protocols;supercomputers;peer-to-peer computing;optical fiber networks;image processing}
+Abstract: The Dutch Advanced School for Computing and Imaging has built five generations of a 200-node distributed system over nearly two decades while remaining aligned with the shifting computer science research agenda. The system has supported years of award-winning research, underlining the benefits of investing in a smaller-scale, tailored design.
+url: https://doi.ieeecomputersociety.org/10.1109/MC.2016.127
+- https://www.francescverdugo.com/XM_40017/dev/
