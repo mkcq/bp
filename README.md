@@ -10,7 +10,7 @@ The assignments that I have looked at are:
 1. Introductory Python-based MPI Assignment (Mandelbrot) - EduPar 2023
 2. Wind Tunnel Simulation - EduHPC 2021
 3. Using MPI For Distributed Hyper-Parameter Optimization And Uncertainty Evaluation - EduHPC 2023
-4. 
+4. Agent-based simulation of fire extinguishing - EduHPC 2019
 
 ## Introductory Python-based MPI Assignment (Mandelbrot) - EduPar 2023
 The assignment by Alina Lazar is mentioned in this paper:
@@ -32,3 +32,10 @@ The assignment by Erik Pautsch, John Li, Silvio Rizzi, George K. Thiruvathukal, 
 - https://figshare.com/articles/conference_contribution/Using_MPI_For_Distributed_Hyper-Parameter_Optimization_And_Uncertainty_Evaluation/24549673/1
 
 Didn't continue due to the fact that the paper mentions that "The main Distributed Computing concept covered is how to divide a problem into chunks that can be easily assigned as independent tasks to nodes in MPI". Despite the interesting topic it unfortunately resembles the first Peachy assignment as a "trivially parallel" problem.
+
+## Agent-based simulation of fire extinguishing - EduHPC 2019
+The assignment by Arturo Gonzalez-Escribano and Jorge Fernandez-Fabeiro is mentioned in this paper:
+- https://tcpp.cs.gsu.edu/curriculum/?q=system/files/Peachy_Eduhpc_19.pdf
+- https://tcpp.cs.gsu.edu/curriculum/?q=system/files/fireAgents.zip (download)
+
+Although an interesting topic, unfortunately at the time of writing (25-04-2024) all the necessary materials for the assignment were not included/could not be found.
