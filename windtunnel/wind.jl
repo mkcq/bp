@@ -12,6 +12,10 @@ struct Particle
     oldFlow::Int
 end
 
+function main()
+    max_iter = 1
+end
+
 # TODO: Function to get wall time.
 
 # TODO: Function to simplify matrix/2D array access.
