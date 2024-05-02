@@ -5,10 +5,11 @@ STEPS = 8
 
 # Structure to represent a solid particle in the tunnel surface.
 struct Particle
-    position::Vector # As [column, row]
+    position::Vector{Int} # As [column, row]
     mass::Int
-    resistance::Int
-    speed::Vector # Two dimensional velocity vector.
+    # resistance::Int
+    resistance::Float16
+    speed::Vector{Float16} # Two dimensional velocity vector.
     oldFlow::Int
 end
 
@@ -31,12 +32,30 @@ end
 function printArguments(rows, cols, max_iter, threshold, fan_pos, fan_size,
     fixed_band_pos, fixed_band_size, fixed_density, 
     moving_band_pos, moving_band_size, moving_density, 
-    n_particles)
-    println("Rows: $rows, Columns: $cols, Max iter: $max_iter, Threshold: $threshold\n
-    Fan: $fan_pos, $fan_size\n
-    Fixed particles : $fixed_band_pos $fixed_band_size $fixed_density\n
-    Moving particles: $moving_band_pos $moving_band_size $moving_density\n
-    Number of particles: $n_particles")
+    random_seq, n_particles, particles)
+    println("### Print Arguments ###\nRows: $rows, Columns: $cols, Max iter: $max_iter, Threshold: $threshold\nFan: $fan_pos, $fan_size\nFixed particles : $fixed_band_pos $fixed_band_size $fixed_density\nMoving particles: $moving_band_pos $moving_band_size $moving_density")
+    for i in 1:3
+        println("Random sequence: $(random_seq[i])")
+    end
+    print("Number of particles: $n_particles\nparticles: ")
+    for i in 1:n_particles
+        print("$(particles[i]) ")
+    end
+end
+
+"""Given a size the function returns a the dimensions for the cartesian grid as [rows, columns]"""
+function getDims(n_ranks)
+    if n_ranks == 1
+        return [1, 1]
+    elseif n_ranks == 2
+        return [1, 2]
+    elseif n_ranks == 4
+        return [2, 2]
+    elseif n_ranks == 8
+        return [4, 2]
+    elseif n_ranks == 16
+        return [4, 4]
+    end
 end
 
 """For DAS the arguments are passed as parameters to main().
@@ -63,12 +82,12 @@ function main()
     moving_band_pos = parse(Int, ARGS[10])      # First position of the band where MOVING particles start.
     moving_band_size = parse(Int, ARGS[11])     # Size of the band where MOVING particles start.
     moving_density = parse(Float16, ARGS[12])   # Density of starting MOVING particles.
-
     flow = []           # Tunnel air flow.
     flow_copy = []      # Tunnel air flow (ancillary, of secondary importance, copy).
     particle_locs = []  # Quickly locate particle positions.
 
-    # TODO: random seq init ARGS(13 - 15)
+    # Random sequences initializer.
+    random_seq = [ARGS[i] for i in 13:15]
 
     # Initialize MPI basics.
     MPI.Init()
@@ -77,7 +96,7 @@ function main()
     rank = MPI.Comm_rank(comm)
 
     # Initialize MPI cartesian grid.
-    dims = getDims(n_ranks)             # TODO: create getDims(n_ranks)
+    dims = getDims(n_ranks)
     periodic = map(_ -> false, dims)
     reorder = false
     comm_cart = MPI.Cart_create(comm, dims; periodic, reorder)
@@ -86,25 +105,24 @@ function main()
     n_particles = (length(ARGS) - 15) ÷ 3               # Number of particles.
     particles = Vector{Particle}(undef, n_particles)    # List to store cells information
     for i in 1:n_particles
-        row = parse(Int, ARGS[16 + i * 3]) * PRECISION
-        col = parse(Int, ARGS[17 + i * 3]) * PRECISION
-        res = parse(Int, ARGS[18 + i * 3]) * PRECISION
+        offset = i
+        row = parse(Int, ARGS[13 + offset * 3]) * PRECISION
+        col = parse(Int, ARGS[14 + offset * 3]) * PRECISION
+        res = parse(Float16, ARGS[15 + offset * 3]) * PRECISION
         particles[i] = Particle([row, col], 0, res, [0,0], 0)
     end
 
     # TODO: Generate fixed/moving particles in the band.
+    
 
     if rank == 0
         printArguments(rows, cols, max_iter, threshold, fan_pos, fan_size,
             fixed_band_pos, fixed_band_size, fixed_density, 
-            moving_band_pos, moving_band_size, moving_density, n_particles)
+            moving_band_pos, moving_band_size, moving_density, random_seq, n_particles, particles)
     end
     MPI.Barrier(comm_cart)
 
     #=
-    Read sim args
-
-
     start global timer
 
     init.
@@ -118,3 +136,5 @@ function main()
     =#
 
 end
+
+main()
