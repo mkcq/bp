@@ -13,22 +13,6 @@ mutable struct Particle
     oldFlow::Int
 end
 
-# TODO: Function to get wall time.
-# TODO: Function to simplify matrix/2D array access.
-# TODO: Update flow in a matrix position.
-# TODO: Move particle function.
-# TODO: Print the current state of the simulation.
-# TODO: Print usage line in stderr.
-# TODO: Start global timer
-# TODO: Parallel initialization.
-# TODO: Simulation.
-# TODO: Particle movement each STEPS iterations.
-# TODO: Effects due to particles each STEPS iterations.
-# TODO: Propagation stage.
-# TODO: MPI: Fill result arrays used for later output.
-# TODO: Stop global timer.
-# TODO: Output for the leaderboard.
-
 function printArguments(rows, cols, max_iter, threshold, fan_pos, fan_size,
     fixed_band_pos, fixed_band_size, fixed_density, 
     moving_band_pos, moving_band_size, moving_density, 
@@ -43,17 +27,29 @@ function printArguments(rows, cols, max_iter, threshold, fan_pos, fan_size,
     end
 end
 
-"""Given a size the function returns a the dimensions for the cartesian grid as [rows, columns]"""
-function getDims(n_ranks)
-    if n_ranks == 1
+"""Given a size the function returns the dimensions for 
+the cartesian grid as [columns, rows].
+2:
+0 (0, 0) - 1 (1, 0)
+4:
+1 (0, 1) - 3 (1, 1)
+0 (0, 0) - 2 (1, 0)
+8:
+3 (0, 3) - 7 (1, 3)
+2 (0, 2) - 6 (1, 2)
+1 (0, 1) - 5 (1, 1)
+0 (0, 0) - 4 (1, 0)
+"""
+function getDims(size)
+    if size == 1
         return [1, 1]
-    elseif n_ranks == 2
-        return [1, 2]
-    elseif n_ranks == 4
+    elseif size == 2
+        return [2, 1]
+    elseif size == 4
         return [2, 2]
-    elseif n_ranks == 8
-        return [4, 2]
-    elseif n_ranks == 16
+    elseif size == 8
+        return [2, 4]
+    elseif size == 16
         return [4, 4]
     end
 end
@@ -182,12 +178,12 @@ particle_row, particle_col, particle_density, ...
 """
 function main()
     # Simulation data.
-    rows = parse(Int, ARGS[1])          # Tunnel rows.
-    cols = parse(Int, ARGS[2])          # Tunnel columns.
-    max_iter = parse(Int, ARGS[3])      # Max number of sim (simulation) steps.
-    threshold = parse(Float16, ARGS[4]) # Threshold of variability to continue the sim.
-    fan_pos = parse(Int, ARGS[5])       # First position of the fan.
-    fan_size = parse(Int, ARGS[6])      # Fan size.
+    rows = parse(Int, ARGS[1])                  # Tunnel rows.
+    cols = parse(Int, ARGS[2])                  # Tunnel columns.
+    max_iter = parse(Int, ARGS[3])              # Max number of sim (simulation) steps.
+    threshold = parse(Float16, ARGS[4])         # Threshold of variability to continue the sim.
+    fan_pos = parse(Int, ARGS[5])               # First position of the fan.
+    fan_size = parse(Int, ARGS[6])              # Fan size.
     fixed_band_pos = parse(Int, ARGS[7])        # First position of the band where FIXED particles Start.
     fixed_band_size = parse(Int, ARGS[8])       # Size of the band where FIXED particles start.
     fixed_density = parse(Float16, ARGS[9])     # Density of starting FIXED particles.
@@ -212,6 +208,10 @@ function main()
     reorder = false
     comm_cart = MPI.Cart_create(comm, dims; periodic, reorder)
 
+    # Initialize own rows and cols. dims = [c, r]
+    own_col = cols ÷ dims[1]
+    own_row = rows ÷ dims[2]
+
     # Read particles from the arguments.
     n_particles = (length(ARGS) - 15) ÷ 3               # Number of particles.
     # Add number of fixed and moving particles in the bands.
@@ -220,7 +220,7 @@ function main()
     n_particles = n_particles + n_fixed_band + n_moving_band
     particles::Vector{Particle} = []                    # List to store cells information
     
-    if rank == 0; printDEBUG(n_fixed_band, n_moving_band, n_particles) end;MPI.Barrier(comm_cart)
+    # if rank == 0; printDEBUG(n_fixed_band, n_moving_band, n_particles) end;MPI.Barrier(comm_cart)
     
     # Read fixed particles.
     fixed_particles = (length(ARGS) - 15) ÷ 3
@@ -257,14 +257,14 @@ function main()
         push!(particles, Particle([row, col], mass, resistance, speed, 0))
     end
 
-    if rank == 0
-        printArguments(rows, cols, max_iter, threshold, fan_pos, fan_size,
-            fixed_band_pos, fixed_band_size, fixed_density, 
-            moving_band_pos, moving_band_size, moving_density, random_seq, n_particles, particles)
-    end
-    MPI.Barrier(comm_cart)
-
+    # if rank == 0
+    #     printArguments(rows, cols, max_iter, threshold, fan_pos, fan_size,
+    #         fixed_band_pos, fixed_band_size, fixed_density, 
+    #         moving_band_pos, moving_band_size, moving_density, random_seq, n_particles, particles)
+    # end
+    
     # TODO: Start global timer.
+    MPI.Barrier(comm_cart)
 
     # Initialization for parallelization.
     flow = zeros(Int, cols, rows)            # Tunnel air flow.
@@ -276,22 +276,26 @@ function main()
         # Change fan values each STEP iterations.
         updateFan(iter, fan_pos, fan_size, flow)
         
-        # Particles movement each STEPS iterations.
-        particleMovements(iter, rows, cols, particle_locs, particles, flow)
+        # # Particles movement each STEPS iterations.
+        # particleMovements(iter, rows, cols, particle_locs, particles, flow)
         
-        # Effects due to particles each STEPS iterations.
-        particleEffects(iter, cols, n_particles, particles, flow, flow_copy, particle_locs)
+        # # Effects due to particles each STEPS iterations.
+        # particleEffects(iter, cols, n_particles, particles, flow, flow_copy, particle_locs)
 
-        # Copy data in ancillary structure.
-        copyToAncillary(rows, cols, flow_copy, flow)
+        # # Copy data in ancillary structure.
+        # copyToAncillary(rows, cols, flow_copy, flow)
 
-        # Propagation stage.
-        propagationStage(iter, threshold, rows, cols, flow, flow_copy, particle_locs)
+        # # Propagation stage.
+        # propagationStage(iter, threshold, rows, cols, flow, flow_copy, particle_locs)
     end
 
     # TODO: Stop global timer.
+    MPI.Barrier(comm_cart)
 
     # TODO: Print results.
+    if rank == 0
+        
+    end
 end
 
 main()
