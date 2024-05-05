@@ -16,8 +16,8 @@ particles = 8 17 0.9 9 16 0.9 9 17 0.9 9 18 0.9 10 16 0.9 10 17 0.9 10 18 0.9 11
 
 rows = 64               # Tunnel rows.
 cols = 64               # Tunnel columns.
-max_iter = 1            # Max number of sim (simulation) steps.
-threshold = 0.8          # Threshold of variability to continue the sim.
+max_iter = 1            # Max number of sim (simulation) steps. Example was 3710.
+threshold = 0.8         # Threshold of variability to continue the sim.
 fan_pos = 2             # First position of the fan.
 fan_size = 28           # Fan size.
 fixed_band_pos = 1      # First position of the band where FIXED particles Start.

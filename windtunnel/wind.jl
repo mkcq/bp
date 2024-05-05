@@ -28,17 +28,23 @@ function printArguments(rows, cols, max_iter, threshold, fan_pos, fan_size,
 end
 
 """Given a size the function returns the dimensions for 
-the cartesian grid as [columns, rows].
-2:
-0 (0, 0) - 1 (1, 0)
-4:
-1 (0, 1) - 3 (1, 1)
-0 (0, 0) - 2 (1, 0)
-8:
-3 (0, 3) - 7 (1, 3)
-2 (0, 2) - 6 (1, 2)
-1 (0, 1) - 5 (1, 1)
-0 (0, 0) - 4 (1, 0)
+the cartesian grid as [columns, rows].\n
+
+|0        |1        |
+|:--:     |:--:     |
+|0 (0, 0) | 1 (1, 0)|
+
+|0        |1        |
+|:--:     |:--:     |
+|1 (0, 1) | 3 (1, 1)|
+|0 (0, 0) | 2 (1, 0)|
+
+|0        |1        |
+|:--:     |:--:     |
+|3 (0, 3) | 7 (1, 3)|
+|2 (0, 2) | 6 (1, 2)|
+|1 (0, 1) | 5 (1, 1)|
+|0 (0, 0) | 4 (1, 0)|
 """
 function getDims(size)
     if size == 1
@@ -61,15 +67,54 @@ function printDEBUG(n_fixed_band, n_moving_band, n_particles)
     println("$x, $y, $z\nn_fixed_band=$n_fixed_band\nn_moving_band=$n_moving_band\nn_particles=$n_particles")
 end
 
-function updateFan(iter, fan_pos, fan_size, flow)
-    if iter % STEPS == 1
-        for j in fan_pos:fan_pos+fan_size
+"""Update only the first row of the ranks at the top of the topology."""
+function updateFan(rank, iter, fan_pos, fan_size, flow, max_rows, my_row, max_cols, my_col)
+    if (max_rows == my_row) && (iter % STEPS == 1)
+        lb = fan_pos + my_col * fan_size ÷ max_cols
+        ub = ((fan_pos + fan_size) ÷ max_cols) * (my_col + 1)
+
+        for j in lb:ub
             phase = iter ÷ STEPS * (π ÷ 4)
             phase_step = π ÷ 2 ÷ fan_size
             pressure_level = 9 + 2 * sin(phase + (j - fan_pos) * phase_step)
             noise = 0.5 - rand(1)[1]
             # Store level in the first row of the ancillary structure.
             flow[1, j] = trunc(Int, PRECISION * (pressure_level + noise))
+            println("\n$rank : $j : $(flow[1,j])")
+        end
+    end
+end
+
+# TODO: Check whether the placements of c and r are correct.
+function moveParticle(flow, particles, p, rows, cols)
+    for i in 1:STEPS
+        c = particles[p].position[1] ÷ PRECISION
+        r = particles[p].position[2] ÷ PRECISION
+        pressure = flow[c-1, r]
+        left = 0; right = 0
+        c == 0 ? left = 0 : left = pressure - flow[c-1, r-1];
+        c == cols - 1 ? right = 0 : right = pressure - flow[c-1, r+1];
+
+        flow_row = trunc(Int, pressure ÷ particles[p].mass * PRECISION)
+        flow_col = trunc(Int, (right - left) ÷ particles[p].mass * PRECISION)
+
+        # Speed change.
+        particles[p].speed[2] = (particles[p].speed[2] + flow_row) ÷ 2
+        particles[p].speed[1] = (particles[p].speed[1] + flow_col) ÷ 2
+        
+        # Movement.
+        particles[p].position[2] = particles[p].position[2] + particles[p].speed[2] ÷ STEPS ÷ 2
+        particles[p].position[1] = particles[p].position[1] + particles[p].speed[1] ÷ STEPS ÷ 2
+    
+        # Control limits.
+        if particles[p].position[2] >= PRECISION * rows
+            particles[p] = PRECISION * rows - 1
+        end
+        if particles[p].position[1] < 0
+            particles[p].position[1] = 0
+        end
+        if particles[p].position[1] >= PRECISION * cols
+            particles[p].position[1] = PRECISION * cols
         end
     end
 end
@@ -91,7 +136,7 @@ function particleMovements(iter, rows, cols, particle_locs, particles, flow)
             if mass == 0
                 continue
             end
-            moveParticle(flow, particles, p, rows, cols) # TODO: Implement this
+            moveParticle(flow, particles, p, rows, cols)
         end
 
         # Annotate position.
@@ -101,6 +146,28 @@ function particleMovements(iter, rows, cols, particle_locs, particles, flow)
             particle_locs[row, col] += 1
         end
     end
+end
+
+function updateFlow(flow, flow_copy, particle_locs, row, col, cols, skip_particles)
+    # Skip update in particle positions.
+    if skip_particles && (particle_locs[c,r] != 0)
+        return 0
+    end
+
+    # Update if border left.
+    if col == 0
+        flow[col, row] = (flow_copy[col, row] + flow_copy[col-1, row] * 2 + flow_copy[col-1, row+1]) ÷ 4
+    end
+    # Update if border right.
+    if col == cols - 1
+        flow[col, row] = (flow_copy[col, row] + flow_copy[col-1, row] * 2 + flow_copy[col-1, row-1]) ÷ 4      
+    end
+    if col > 0 && (col < cols - 1)
+        flow[col, row] = (flow_copy[col, row] + flow_copy[col-1, row] * 2 + flow_copy[col-1, row-1] + flow_copy[col-1, row+1]) ÷ 5
+    end
+
+    # Return flow variation at this position.
+    return abs(flow_copy[col, row] - flow(col, row))
 end
 
 function particleEffects(iter, cols, n_particles, particles, flow, flow_copy, particle_locs)
@@ -170,11 +237,7 @@ end
 """For DAS the arguments are passed as parameters to main().
 For local execution the arguments are in the command line.
 
-Order of arguments: rows, cols, max_iter, threshold, fan_pos, fan_size, 
-fixed_band_pos, fixed_band_size, fixed_density, 
-moving_band_pos, moving_band_size, moving_density, 
-rand_seq_1, rand_seq_2, rand_seq_3, 
-particle_row, particle_col, particle_density, ...
+Order of arguments: rows, cols, max_iter, threshold, fan_pos, fan_size, fixed_band_pos, fixed_band_size, fixed_density, moving_band_pos, moving_band_size, moving_density, rand_seq_1, rand_seq_2, rand_seq_3, particle_row, particle_col, particle_density, ...
 """
 function main()
     # Simulation data.
@@ -191,12 +254,12 @@ function main()
     moving_band_size = parse(Int, ARGS[11])     # Size of the band where MOVING particles start.
     moving_density = parse(Float16, ARGS[12])   # Density of starting MOVING particles.
     
-    # Random sequences initializer.
+    # Initialize random sequences.
     random_seq = [parse(Int, ARGS[i]) for i in 13:15]
     seed = rand(random_seq)
     Random.seed!(seed)
 
-    # Initialize MPI basics.
+    # Initialize MPI.
     MPI.Init()
     comm = MPI.Comm_dup(MPI.COMM_WORLD)
     n_ranks = MPI.Comm_size(comm)
@@ -206,21 +269,23 @@ function main()
     dims = getDims(n_ranks)
     periodic = map(_ -> false, dims)
     reorder = false
-    comm_cart = MPI.Cart_create(comm, dims; periodic, reorder)
+    cart_comm = MPI.Cart_create(comm, dims; periodic, reorder)
+    cart_coord = MPI.Cart_coords(cart_comm)
 
     # Initialize own rows and cols. dims = [c, r]
     own_col = cols ÷ dims[1]
     own_row = rows ÷ dims[2]
 
     # Read particles from the arguments.
-    n_particles = (length(ARGS) - 15) ÷ 3               # Number of particles.
+    n_particles = (length(ARGS) - 15) ÷ 3
     # Add number of fixed and moving particles in the bands.
     n_fixed_band = trunc(Int, fixed_band_size * cols * fixed_density)
     n_moving_band = trunc(Int, moving_band_size * cols * moving_density)
     n_particles = n_particles + n_fixed_band + n_moving_band
-    particles::Vector{Particle} = []                    # List to store cells information
+    # List to store cells information.
+    particles::Vector{Particle} = []
     
-    # if rank == 0; printDEBUG(n_fixed_band, n_moving_band, n_particles) end;MPI.Barrier(comm_cart)
+    # if rank == 0; printDEBUG(n_fixed_band, n_moving_band, n_particles) end;MPI.Barrier(cart_comm)
     
     # Read fixed particles.
     fixed_particles = (length(ARGS) - 15) ÷ 3
@@ -247,7 +312,7 @@ function main()
 
     # Generate moving particles in band.
     lowerbound = n_particles - n_moving_band + 1
-    # if rank == 0; println(lowerbound) end;MPI.Barrier(comm_cart)
+    # if rank == 0; println(lowerbound) end;MPI.Barrier(cart_comm)
     for i in lowerbound:n_particles
         row = trunc(Int, PRECISION * (moving_band_pos + moving_band_size * rand(1)[1]))
         col = trunc(Int, PRECISION * cols * rand(1)[1])
@@ -258,44 +323,40 @@ function main()
     end
 
     # if rank == 0
-    #     printArguments(rows, cols, max_iter, threshold, fan_pos, fan_size,
-    #         fixed_band_pos, fixed_band_size, fixed_density, 
-    #         moving_band_pos, moving_band_size, moving_density, random_seq, n_particles, particles)
+    #     printArguments(rows, cols, max_iter, threshold, fan_pos, fan_size, fixed_band_pos, fixed_band_size, fixed_density, moving_band_pos, moving_band_size, moving_density, random_seq, n_particles, particles)
     # end
     
     # TODO: Start global timer.
-    MPI.Barrier(comm_cart)
+    MPI.Barrier(cart_comm)
 
     # Initialization for parallelization.
-    flow = zeros(Int, cols, rows)            # Tunnel air flow.
-    flow_copy = zeros(Int, cols, rows)       # Tunnel air flow (ancillary, of secondary importance, copy).
-    particle_locs = zeros(Int, cols, rows)   # Quickly locate particle positions.
+    flow = zeros(Int, own_col, own_row)            # Tunnel air flow.
+    flow_copy = zeros(Int, own_col, own_row)       # Tunnel air flow (ancillary, of secondary importance, copy).
+    particle_locs = zeros(Int, own_col, own_row)   # Quickly locate particle positions.
 
     # Simulation.
     for iter in 1:max_iter
         # Change fan values each STEP iterations.
-        updateFan(iter, fan_pos, fan_size, flow)
-        
-        # # Particles movement each STEPS iterations.
-        # particleMovements(iter, rows, cols, particle_locs, particles, flow)
-        
-        # # Effects due to particles each STEPS iterations.
-        # particleEffects(iter, cols, n_particles, particles, flow, flow_copy, particle_locs)
+        updateFan(rank, iter, fan_pos, fan_size, flow, dims[2], cart_coord[2] + 1, dims[1], cart_coord[1])
+        # println("\n$rank : $flow\n")
 
-        # # Copy data in ancillary structure.
-        # copyToAncillary(rows, cols, flow_copy, flow)
+        # Particles movement each STEPS iterations.
+        particleMovements(iter, rows, cols, particle_locs, particles, flow)
+        
+        # Effects due to particles each STEPS iterations.
+        particleEffects(iter, cols, n_particles, particles, flow, flow_copy, particle_locs)
 
-        # # Propagation stage.
-        # propagationStage(iter, threshold, rows, cols, flow, flow_copy, particle_locs)
+        # Copy data in ancillary structure.
+        copyToAncillary(rows, cols, flow_copy, flow)
+
+        # Propagation stage.
+        propagationStage(iter, threshold, rows, cols, flow, flow_copy, particle_locs)
     end
 
     # TODO: Stop global timer.
-    MPI.Barrier(comm_cart)
+    MPI.Barrier(cart_comm)
 
     # TODO: Print results.
-    if rank == 0
-        
-    end
 end
 
 main()
