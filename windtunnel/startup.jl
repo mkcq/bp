@@ -1,6 +1,6 @@
 using MPI
 
-PROCS = [4]
+PROCS = [2]
 FILE = "wind.jl"
 timings = [;]
 
