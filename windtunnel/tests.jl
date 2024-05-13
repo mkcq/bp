@@ -1,4 +1,5 @@
 using Test
+using MPI
 # include("wind.jl")
 include("wind2.jl")
 
@@ -60,7 +61,7 @@ end
     @test inCartGrid(tsr, tsc, 6, 6, own_rows, own_cols) == false
 end
 
-@testset "updateFan 2cx2r" begin
+@testset "updateFan 2c x 2r" begin
     maxiter = 10; fp = 2; fs = 7
     cart_dims = [2, 2]; cart_coord = [[0, 0], [0, 1], [1, 0], [1, 1]]
     tunnel_cols = 10; tunnel_rows = 6
@@ -92,7 +93,7 @@ end
     end
 end
 
-@testset "updateFan 2cx1r" begin
+@testset "updateFan 2c x 1r" begin
     maxiter = 1; fp = 3; fs = 5
     cart_dims = [2, 1]; cart_coord = [[0, 0], [1, 0]]
     tunnel_cols = 10; tunnel_rows = 6
@@ -116,18 +117,85 @@ end
     end
 end
 
+append!(ARGS, ["tr", "tc", "mi", "th", "fp", "fs", "fbp", "fbs", "fd", "mbp", "mbs", "md", "rs1", "rs2", "rs3", "5", "5", "0.5", "5", "6", "0.5", "6", "5", "0.5", "6", "6","0.5"])
 
+@testset "readFixedParticles" begin
+    tunnel_rows = 10; tunnel_cols = 10
+    cart_dims = [2, 2]; cart_coord = [[0, 0], [0, 1], [1, 0], [1, 1]]
+    own_cols = tunnel_cols ÷ cart_dims[1]; own_rows = tunnel_rows ÷ cart_dims[2]
 
-# @testset "particleMovements" begin
-#     iter = 1; rows = 10; cols = 20; dims = [2, 1]
-#     coorl = [0, 0]; coordr = [1, 0]
-#     coll = cols ÷ dims[1]; rowl = rows ÷ dims[2]
-#     colr = cols ÷ dims[1]; rowr = rows ÷ dims[2]
+    lb = 1; ub = (length(ARGS) - 15) ÷ 3
+    particles0::Vector{Particle} = []
+    particles1::Vector{Particle} = []
+    particles2::Vector{Particle} = []
+    particles3::Vector{Particle} = []
+    
+    for i in 1:4    
+        tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord[i])
+        tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord[i])
+        if i == 1
+            readFixedParticles(lb, ub, tsr, tsc, own_rows, own_cols, particles0)
+        elseif i == 2
+            readFixedParticles(lb, ub, tsr, tsc, own_rows, own_cols, particles1)
+        elseif i == 3
+            readFixedParticles(lb, ub, tsr, tsc, own_rows, own_cols, particles2)
+        else
+            readFixedParticles(lb, ub, tsr, tsc, own_rows, own_cols, particles3)
+        end
+    end
 
-#     flowl = zeros(Int, rowl + 2, coll + 2); flowr = zeros(Int, rowr + 2, colr + 2)
-#     pll = zeros(Int, rowl + 2, coll + 2); plr = zeros(Int, rowr + 2, colr + 2)
+    @test particles0[1].position == [6, 5] * PRECISION
+    @test particles1[1].position == [5, 5] * PRECISION
+    @test particles2[1].position == [6, 6] * PRECISION
+    @test particles3[1].position == [5, 6] * PRECISION
+end
 
-#     particles = []
+@testset "moveParticle" begin
+    # TODO: With MPI.
+end
 
-#     # particleMovements(iter, rows, cols, particle_locs, particles, flow)
-# end
+@testset "getNeighborRanks 2c x 2r" begin
+    mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+    using Test
+    include("wind2.jl")
+    tunnel_rows = 16; tunnel_cols = 16
+
+    MPI.Init()
+    comm = MPI.Comm_dup(MPI.COMM_WORLD)
+    n_ranks = MPI.Comm_size(comm)
+    rank = MPI.Comm_rank(comm)
+
+    cart_dims = getCartDims(n_ranks)
+    periodic = map(_ -> false, cart_dims)
+    reorder = false
+    cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+    cart_coord = MPI.Cart_coords(cart_comm)
+
+    n = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+    
+    if rank == 0
+        @show n["N"] == 1
+        @show n["S"] == -1
+        @show n["E"] == 2
+        @show n["W"] == -1
+    end; MPI.Barrier(cart_comm)
+    if rank == 1
+        @show n["N"] == -1
+        @show n["S"] == 0
+        @show n["E"] == 3
+        @show n["W"] == -1
+    end; MPI.Barrier(cart_comm)
+    if rank == 2
+        @show n["N"] == 3
+        @show n["S"] == -1
+        @show n["E"] == -1
+        @show n["W"] == 0
+    end; MPI.Barrier(cart_comm)
+    if rank == 3
+        @show n["N"] == -1
+        @show n["S"] == 2
+        @show n["E"] == -1
+        @show n["W"] == 1
+    end; MPI.Barrier(cart_comm)
+    '`))
+end

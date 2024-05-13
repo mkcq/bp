@@ -1,7 +1,7 @@
 using MPI
 
 PROCS = [2]
-FILE = "wind.jl"
+FILE = "wind2.jl"
 timings = [;]
 
 #=
