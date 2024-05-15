@@ -173,28 +173,44 @@ end
     n = getNeighborRanks(cart_dims, cart_coord, cart_comm)
     
     if rank == 0
-        @show n["N"] == 1
-        @show n["S"] == -1
-        @show n["E"] == 2
-        @show n["W"] == -1
+        @test n["N"] == 1
+        @test n["S"] == -1
+        @test n["E"] == 2
+        @test n["W"] == -1
+        @test n["NE"] == 3
+        @test n["NW"] == -1
+        @test n["SE"] == -1
+        @test n["SW"] == -1
     end; MPI.Barrier(cart_comm)
     if rank == 1
-        @show n["N"] == -1
-        @show n["S"] == 0
-        @show n["E"] == 3
-        @show n["W"] == -1
+        @test n["N"] == -1
+        @test n["S"] == 0
+        @test n["E"] == 3
+        @test n["W"] == -1
+        @test n["NE"] == -1
+        @test n["NW"] == -1
+        @test n["SE"] == 2
+        @test n["SW"] == -1
     end; MPI.Barrier(cart_comm)
     if rank == 2
-        @show n["N"] == 3
-        @show n["S"] == -1
-        @show n["E"] == -1
-        @show n["W"] == 0
+        @test n["N"] == 3
+        @test n["S"] == -1
+        @test n["E"] == -1
+        @test n["W"] == 0
+        @test n["NE"] == -1
+        @test n["NW"] == 1
+        @test n["SE"] == -1
+        @test n["SW"] == -1
     end; MPI.Barrier(cart_comm)
     if rank == 3
-        @show n["N"] == -1
-        @show n["S"] == 2
-        @show n["E"] == -1
-        @show n["W"] == 1
+        @test n["N"] == -1
+        @test n["S"] == 2
+        @test n["E"] == -1
+        @test n["W"] == 1
+        @test n["NE"] == -1
+        @test n["NW"] == -1
+        @test n["SE"] == -1
+        @test n["SW"] == 0
     end; MPI.Barrier(cart_comm)
     '`))
 end

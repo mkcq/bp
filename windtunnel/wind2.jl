@@ -107,7 +107,12 @@ function getNeighborRanks(cart_dims, cart_coord, cart_comm)
     rank_east = east == -1 ? -1 : MPI.Cart_rank(cart_comm, [east, cart_coord[2]])
     rank_west = west == -1 ? -1 : MPI.Cart_rank(cart_comm, [west, cart_coord[2]])
     
-    Dict([("N", rank_north), ("S", rank_south), ("E", rank_east), ("W", rank_west)])
+    rank_ne = (north != -1 && east != -1) ? MPI.Cart_rank(cart_comm, [east, north]) : -1 
+    rank_nw = (north != -1 && west != -1) ? MPI.Cart_rank(cart_comm, [west, north]) : -1 
+    rank_se = (south != -1 && east != -1) ? MPI.Cart_rank(cart_comm, [east, south]) : -1 
+    rank_sw = (south != -1 && west != -1) ? MPI.Cart_rank(cart_comm, [west, south]) : -1 
+
+    Dict([("N", rank_north), ("S", rank_south), ("E", rank_east), ("W", rank_west), ("NE", rank_ne), ("NW", rank_nw), ("SE", rank_se), ("SW", rank_sw)])
 end
 
 
