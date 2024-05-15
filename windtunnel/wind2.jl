@@ -112,14 +112,20 @@ end
 
 
 """"""
-function moveParticle(flow, particles, p, tunnel_rows, tunnel_cols)
+function moveParticle(flow, particles, p, tunnel_rows, tunnel_cols, cart_dims, cart_coord, cart_comm)
     for i in 1:STEPS
+        # TODO: I could combine particles and p into one.
     
         r = particles[p].position[1] ÷ PRECISION
         c = particles[p].position[2] ÷ PRECISION
         
-        pressure = flow[r - 1, c] # TODO: Data dependency here. Left here.
+        # TODO: Left here.
+        neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+
+        # TODO: Data dependency here.
+        pressure = flow[r - 1, c]
         
+        # TODO: Data dependency here.
         left = 0; right = 0
         c == 2 ? left = 0 : left = pressure - flow[r - 1, c - 1]
         c == own_cols + 1 ? right = 0 : right = pressure - flow[r - 1, c + 1]
@@ -127,7 +133,6 @@ function moveParticle(flow, particles, p, tunnel_rows, tunnel_cols)
         flow_row = trunc(Int, pressure + particles[p].mass * PRECISION)
         flow_col = trunc(Int, (right - left) ÷ particles[p].mass * PRECISION)
 
-        # TODO: I could combine particles and p into one.
         # Speed change.
         particles[p].speed[1] = (particles[p].speed[1] + flow_row) ÷ 2
         particles[p].speed[2] = (particles[p].speed[2] + flow_col) ÷ 2

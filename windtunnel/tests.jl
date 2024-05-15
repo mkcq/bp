@@ -1,5 +1,7 @@
 using Test
 using MPI
+using MPIClusterManagers
+using Distributed
 # include("wind.jl")
 include("wind2.jl")
 
@@ -150,10 +152,7 @@ append!(ARGS, ["tr", "tc", "mi", "th", "fp", "fs", "fbp", "fbs", "fd", "mbp", "m
     @test particles3[1].position == [5, 6] * PRECISION
 end
 
-@testset "moveParticle" begin
-    # TODO: With MPI.
-end
-
+# # TODO: Make this test cleaner.
 @testset "getNeighborRanks 2c x 2r" begin
     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
     using Test
@@ -198,4 +197,77 @@ end
         @show n["W"] == 1
     end; MPI.Barrier(cart_comm)
     '`))
+end
+
+# @testset "getNeighborRanks 2c x 2r 2" begin
+#     if procs() == workers()
+#         n_ranks = 4
+#         manager = MPIWorkerManager(n_ranks)
+#         addprocs(manager)
+#     end
+
+#     @everywhere workers() begin
+#         using MPI
+#         include("wind2.jl")
+
+#         tunnel_rows = 16; tunnel_cols = 16
+
+#         MPI.Init()
+#         comm = MPI.Comm_dup(MPI.COMM_WORLD)
+#         n_ranks = MPI.Comm_size(comm)
+#         rank = MPI.Comm_rank(comm)
+
+#         cart_dims = getCartDims(n_ranks)
+#         periodic = map(_ -> false, cart_dims)
+#         reorder = false
+#         cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+#         cart_coord = MPI.Cart_coords(cart_comm)
+
+#         n = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+
+#         if rank == 0
+#             @show n["N"] == 1
+#             @show n["S"] == -1
+#             @show n["E"] == 2
+#             @show n["W"] == -1
+#         end; MPI.Barrier(cart_comm)
+#         if rank == 1
+#             @show n["N"] == -1
+#             @show n["S"] == 0
+#             @show n["E"] == 3
+#             @show n["W"] == -1
+#         end; MPI.Barrier(cart_comm)
+#         if rank == 2
+#             @show n["N"] == 3
+#             @show n["S"] == -1
+#             @show n["E"] == -1
+#             @show n["W"] == 0
+#         end; MPI.Barrier(cart_comm)
+#         if rank == 3
+#             @show n["N"] == -1
+#             @show n["S"] == 2
+#             @show n["E"] == -1
+#             @show n["W"] == 1
+#         end; MPI.Barrier(cart_comm)
+#     end
+# end
+
+@testset "moveParticle" begin
+    # TODO: With MPI.
+    #=
+    8 x 8
+    -1 -1 -1 -1 -1 -1  -1 -1 -1 -1 -1 -1 
+    -1  0  0  0  0 -1  -1  0  0  0  0 -1
+    -1  0  0  0  0 -1  -1  0  0  0  0 -1
+    -1  0  0  0  0 -1  -1  0  0  0  0 -1
+    -1  0  0  0  0 -1  -1  0  0  0  0 -1
+    -1 -1 -1 -1 -1 -1  -1 -1 -1 -1 -1 -1 
+
+    -1 -1 -1 -1 -1 -1  -1 -1 -1 -1 -1 -1 
+    -1  0  0  0  0 -1  -1  0  0  0  0 -1
+    -1  0  0  0  0 -1  -1  0  0  0  0 -1
+    -1  0  0  0  0 -1  -1  0  0  0  0 -1
+    -1  0  0  0  0 -1  -1  0  0  0  0 -1
+    -1 -1 -1 -1 -1 -1  -1 -1 -1 -1 -1 -1 
+    =#
 end
