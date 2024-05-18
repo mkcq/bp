@@ -64,9 +64,9 @@ end
 end
 
 @testset "updateFan 2c x 2r" begin
-    maxiter = 10; fp = 2; fs = 7
+    maxiter = 8; fp = 2; fs = 7
     cart_dims = [2, 2]; cart_coord = [[0, 0], [0, 1], [1, 0], [1, 1]]
-    tunnel_cols = 10; tunnel_rows = 6
+    tunnel_cols = 10; tunnel_rows = 4
     own_cols = tunnel_cols ÷ cart_dims[1]; own_rows = tunnel_rows ÷ cart_dims[2]
     
     flow0 = zeros(Int, own_rows + 2, own_cols + 2)
@@ -269,21 +269,43 @@ end
 # end
 
 @testset "moveParticle" begin
-    # TODO: With MPI.
-    #=
-    8 x 8
-    -1 -1 -1 -1 -1 -1  -1 -1 -1 -1 -1 -1 
-    -1  0  0  0  0 -1  -1  0  0  0  0 -1
-    -1  0  0  0  0 -1  -1  0  0  0  0 -1
-    -1  0  0  0  0 -1  -1  0  0  0  0 -1
-    -1  0  0  0  0 -1  -1  0  0  0  0 -1
-    -1 -1 -1 -1 -1 -1  -1 -1 -1 -1 -1 -1 
+    mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+    using Test
+    include("wind2.jl")
 
-    -1 -1 -1 -1 -1 -1  -1 -1 -1 -1 -1 -1 
-    -1  0  0  0  0 -1  -1  0  0  0  0 -1
-    -1  0  0  0  0 -1  -1  0  0  0  0 -1
-    -1  0  0  0  0 -1  -1  0  0  0  0 -1
-    -1  0  0  0  0 -1  -1  0  0  0  0 -1
-    -1 -1 -1 -1 -1 -1  -1 -1 -1 -1 -1 -1 
-    =#
+    append!(ARGS, ["tr", "tc", "mi", "th", "fp", "fs", "fbp", "fbs", "fd", "mbp", "mbs", "md", "rs1", "rs2", "rs3", "5", "5", "0.5", "5", "6", "0.5", "6", "5", "0.5", "6", "6","0.5"])
+
+    tunnel_rows = tunnel_cols = begin 10 end
+    
+    MPI.Init()
+    comm = MPI.Comm_dup(MPI.COMM_WORLD); n_ranks = MPI.Comm_size(comm); rank = MPI.Comm_rank(comm)
+    cart_dims = getCartDims(n_ranks); periodic = map(_ -> false, cart_dims); reorder = false; cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder); cart_coord = MPI.Cart_coords(cart_comm); cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+
+    own_cols = tunnel_cols ÷ cart_dims[1]; own_rows = tunnel_rows ÷ cart_dims[2]
+
+    tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord); tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
+
+    n_ps = (length(ARGS) - 15) ÷ 3; ps::Vector{Particle} = []; readFixedParticles(1, n_ps, tsr, tsc, own_rows, own_cols, ps)
+
+    flow = zeros(Int, own_rows + 2, own_cols + 2); flow[1, :] = flow[end, :] .= -1; flow[:, 1] = flow[:, end] .= -1
+    p_locs = zeros(Int, own_rows + 2, own_cols + 2); p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
+
+    for iter in 1:10
+        
+        updateFan(iter, 2, 8, flow, cart_dims, cart_coord, tunnel_cols, own_cols)
+
+        particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, ps, flow, cart_comm, cart_neighbors)
+    end
+
+    # rcv = MPI.Gather(flow, cart_comm;root=0)
+    # if rank == 0
+    #     result = zeros(Int, tunnel_rows + 2, tunnel_cols + 2)
+    #     result[1,:] = result[end,:] = result[:,1] = result[:,end] .= -1
+    #     inner_result = view(result, 2:tunnel_rows + 1, 2:tunnel_cols + 1)
+    #     partitioned = collect(Iterators.partition(rcv, (own_rows + 2) * (own_cols + 2)))
+    #     matrices = [reshape(partitioned[i], own_rows + 2, own_cols + 2) for i in 1:n_ranks]
+    #     inner_result .= [view(matrices[2], 2:own_rows+1, 2:own_cols+1) view(matrices[4], 2:own_rows+1, 2:own_cols+1);view(matrices[1], 2:own_rows+1, 2:own_cols+1) view(matrices[3], 2:own_rows+1, 2:own_cols+1)]
+    #     display(inner_result)
+    # end
+    '`))
 end
