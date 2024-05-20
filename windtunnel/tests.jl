@@ -268,44 +268,164 @@ end
 #     end
 # end
 
-@testset "moveParticle" begin
+# TODO: Not complete.
+# @testset "moveParticle" begin
+#     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+#     using Test
+#     include("wind2.jl")
+
+#     append!(ARGS, ["tr", "tc", "mi", "th", "fp", "fs", "fbp", "fbs", "fd", "mbp", "mbs", "md", "rs1", "rs2", "rs3", "5", "5", "0.5", "5", "6", "0.5", "6", "5", "0.5", "6", "6","0.5"])
+
+#     tunnel_rows = 10
+#     tunnel_cols = 10
+    
+#     MPI.Init()
+#     comm = MPI.Comm_dup(MPI.COMM_WORLD)
+#     n_ranks = MPI.Comm_size(comm)
+#     rank = MPI.Comm_rank(comm)
+#     cart_dims = getCartDims(n_ranks)
+#     periodic = map(_ -> false, cart_dims)
+#     reorder = false
+#     cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+#     cart_coord = MPI.Cart_coords(cart_comm)
+#     cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+
+#     own_cols = tunnel_cols ÷ cart_dims[1]
+#     own_rows = tunnel_rows ÷ cart_dims[2]
+#     tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
+#     tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
+
+#     n_ps = (length(ARGS) - 15) ÷ 3
+#     ps::Vector{Particle} = []
+#     readFixedParticles(1, n_ps, tsr, tsc, own_rows, own_cols, ps)
+
+#     flow = zeros(Int, own_rows + 2, own_cols + 2); flow[1, :] = flow[end, :] .= -1; flow[:, 1] = flow[:, end] .= -1
+#     p_locs = zeros(Int, own_rows + 2, own_cols + 2); p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
+
+#     for iter in 1:10
+#         updateFan(iter, 2, 8, flow, cart_dims, cart_coord, tunnel_cols, own_cols)
+#         particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, ps, flow, cart_comm, cart_neighbors)
+#     end
+
+#     # rcv = MPI.Gather(flow, cart_comm;root=0)
+#     # if rank == 0
+#     #     result = zeros(Int, tunnel_rows + 2, tunnel_cols + 2)
+#     #     result[1,:] = result[end,:] = result[:,1] = result[:,end] .= -1
+#     #     inner_result = view(result, 2:tunnel_rows + 1, 2:tunnel_cols + 1)
+#     #     partitioned = collect(Iterators.partition(rcv, (own_rows + 2) * (own_cols + 2)))
+#     #     matrices = [reshape(partitioned[i], own_rows + 2, own_cols + 2) for i in 1:n_ranks]
+#     #     inner_result .= [view(matrices[2], 2:own_rows+1, 2:own_cols+1) view(matrices[4], 2:own_rows+1, 2:own_cols+1);view(matrices[1], 2:own_rows+1, 2:own_cols+1) view(matrices[3], 2:own_rows+1, 2:own_cols+1)]
+#     #     display(inner_result)
+#     # end
+#     '`))
+# end
+
+# TODO: Not complete.
+# @testset "sendParticleToNeighbor" begin
+#     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+#     using Test
+#     include("wind2.jl")
+
+#     append!(ARGS, ["tr", "tc", "mi", "th", "fp", "fs", "fbp", "fbs", "fd", "mbp", "mbs", "md", "rs1", "rs2", "rs3", 
+#     "5", "5", "0.5"])
+
+#     tunnel_rows = 10
+#     tunnel_cols = 10
+    
+#     MPI.Init()
+#     comm = MPI.Comm_dup(MPI.COMM_WORLD)
+#     n_ranks = MPI.Comm_size(comm)
+#     rank = MPI.Comm_rank(comm)
+#     cart_dims = getCartDims(n_ranks)
+#     periodic = map(_ -> false, cart_dims)
+#     reorder = false
+#     cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+#     cart_coord = MPI.Cart_coords(cart_comm)
+#     cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+    
+#     own_cols = tunnel_cols ÷ cart_dims[1]
+#     own_rows = tunnel_rows ÷ cart_dims[2]
+#     tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
+#     tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
+    
+#     if rank == 0; @show own_rows, own_cols, tsr, tsc end; MPI.Barrier(cart_comm)
+
+#     n_ps = (length(ARGS) - 15) ÷ 3
+#     ps::Vector{Particle} = []
+#     readFixedParticles(1, n_ps, tsr, tsc, own_rows, own_cols, ps)
+
+#     flow = zeros(Int, own_rows + 2, own_cols + 2); flow[1, :] = flow[end, :] .= -1; flow[:, 1] = flow[:, end] .= -1
+#     p_locs = zeros(Int, own_rows + 2, own_cols + 2); p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
+
+#     if length(ps) > 0
+#         println("$rank : $ps")
+
+#         p = ps[1]
+#         r = p.position[1] ÷ PRECISION + 1
+#         c = p.position[2] ÷ PRECISION + 0
+#         p.position[1] = r
+#         p.position[2] = c
+
+#         if !inCartGrid(tsr, tsc, r, c, own_rows, own_cols)
+#             sendParticleToNeighbor(p, cart_neighbors, tsr, tsc, r, c, own_rows, own_cols)
+#         end
+#     else
+#         println("$rank : no particles.")
+
+#         rmsg = Ref(0)
+#         rreqs = MPI.Request[]
+#         for (k, v) in cart_neighbors
+#             if k == "N" && v >= 0
+#                 rreq = MPI.Irecv!(rmsg, cart_comm;source=v, tag=0)
+#                 push!(rreqs, rreq)
+#             end
+#         end
+#         MPI.Waitall(rreqs)
+#         println("rmsg = $rmsg")
+#     end
+
+#     '`))
+# end
+
+@testset "cleanParticleLocations" begin 
     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
     using Test
     include("wind2.jl")
 
-    append!(ARGS, ["tr", "tc", "mi", "th", "fp", "fs", "fbp", "fbs", "fd", "mbp", "mbs", "md", "rs1", "rs2", "rs3", "5", "5", "0.5", "5", "6", "0.5", "6", "5", "0.5", "6", "6","0.5"])
-
-    tunnel_rows = tunnel_cols = begin 10 end
+    tunnel_rows = 10
+    tunnel_cols = 10
     
     MPI.Init()
-    comm = MPI.Comm_dup(MPI.COMM_WORLD); n_ranks = MPI.Comm_size(comm); rank = MPI.Comm_rank(comm)
-    cart_dims = getCartDims(n_ranks); periodic = map(_ -> false, cart_dims); reorder = false; cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder); cart_coord = MPI.Cart_coords(cart_comm); cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+    comm = MPI.Comm_dup(MPI.COMM_WORLD)
+    n_ranks = MPI.Comm_size(comm)
+    rank = MPI.Comm_rank(comm)
+    cart_dims = getCartDims(n_ranks)
+    periodic = map(_ -> false, cart_dims)
+    reorder = false
+    cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+    cart_coord = MPI.Cart_coords(cart_comm)
+    cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+    
+    own_cols = tunnel_cols ÷ cart_dims[1]
+    own_rows = tunnel_rows ÷ cart_dims[2]
 
-    own_cols = tunnel_cols ÷ cart_dims[1]; own_rows = tunnel_rows ÷ cart_dims[2]
-
-    tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord); tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
-
-    n_ps = (length(ARGS) - 15) ÷ 3; ps::Vector{Particle} = []; readFixedParticles(1, n_ps, tsr, tsc, own_rows, own_cols, ps)
-
-    flow = zeros(Int, own_rows + 2, own_cols + 2); flow[1, :] = flow[end, :] .= -1; flow[:, 1] = flow[:, end] .= -1
     p_locs = zeros(Int, own_rows + 2, own_cols + 2); p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
 
-    for iter in 1:10
-        
-        updateFan(iter, 2, 8, flow, cart_dims, cart_coord, tunnel_cols, own_cols)
+    p_locs[2:own_rows + 1, 2:own_cols + 1] .= 5
 
-        particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, ps, flow, cart_comm, cart_neighbors)
+    for iter in 1:80
+        cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, cart_coord)
+        ub = min(iter - own_rows * (cart_dims[2] - 1 - cart_coord[2]), own_rows) + 1
+        if rank == 1
+            for i in 2:own_rows + 1, j in 2:own_cols + 1
+                i <= ub ? (@test p_locs[i, j] == 0) : (@test p_locs[i, j] != 0)
+            end
+        elseif rank == 0
+            for i in 2:own_rows + 1, j in 2:own_cols + 1
+                i <= ub ? (@test p_locs[i, j] == 0) : (@test p_locs[i, j] != 0)
+            end
+        end
+        MPI.Barrier(cart_comm)
     end
-
-    # rcv = MPI.Gather(flow, cart_comm;root=0)
-    # if rank == 0
-    #     result = zeros(Int, tunnel_rows + 2, tunnel_cols + 2)
-    #     result[1,:] = result[end,:] = result[:,1] = result[:,end] .= -1
-    #     inner_result = view(result, 2:tunnel_rows + 1, 2:tunnel_cols + 1)
-    #     partitioned = collect(Iterators.partition(rcv, (own_rows + 2) * (own_cols + 2)))
-    #     matrices = [reshape(partitioned[i], own_rows + 2, own_cols + 2) for i in 1:n_ranks]
-    #     inner_result .= [view(matrices[2], 2:own_rows+1, 2:own_cols+1) view(matrices[4], 2:own_rows+1, 2:own_cols+1);view(matrices[1], 2:own_rows+1, 2:own_cols+1) view(matrices[3], 2:own_rows+1, 2:own_cols+1)]
-    #     display(inner_result)
-    # end
     '`))
 end

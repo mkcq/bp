@@ -46,9 +46,12 @@ end
 
 
 """Returns the starting index of the first row in a cartesian cell as the actual tunnel row.
-E.g. Assume a 10 x 10 tunnel divided into a 2 x 2 cartesian grid.\n
-First index topleft (0, 1) corner = 10 ÷ 2 * (2 - 1 - 1) + 1 = 1\n
-First index bottomleft (0, 0) corner = 10 ÷ 2 * (2 - 1 - 0) + 1 = 6\n
+E.g. Assume a 10 x 10 tunnel divided into a 2 x 2 cartesian grid.
+
+First index topleft (0, 1) corner = 10 ÷ 2 * (2 - 1 - 1) + 1 = 1
+
+First index bottomleft (0, 0) corner = 10 ÷ 2 * (2 - 1 - 0) + 1 = 6
+
 tunnel_rows ÷ cart_dims[rows] * (cart_dims[rows] - 1 - cart_coord[row]) + 1"""
 tunnelStartRow(tunnel_rows, cart_dims, cart_coord) = tunnel_rows ÷ cart_dims[2] * (cart_dims[2] - 1 - cart_coord[2]) + 1
 
@@ -70,6 +73,7 @@ function readFixedParticles(lb, ub, tsr, tsc, own_rows, own_cols, particles)
             continue
         end
         # For fixed mass = 0.
+        # TODO: Turn mass back to 0.
         mass = trunc(Int, PRECISION * (1 + 5  * rand(1)[1]))
         resistance = trunc(Int, parse(Float16, ARGS[15 + i * 3]) * PRECISION)
         speed = [0, 0]
@@ -159,6 +163,28 @@ end
 
 
 """"""
+function sendParticleToNeighbor(p, cart_neighbors, tsr, tsc, r, c, own_rows, own_cols)
+    send_msg = [p.position[1], p.position[2], p.mass, p.resistance, p.speed[1], p.speed[2], p.old_flow]
+    if tsr + own_rows < r && tsc + own_cols < c
+        if tsc + own_cols < c
+            send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["SE"], tag=0)
+        elseif c < tsc
+            send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["SW"], tag=0)
+        else
+            send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["S"], tag=0)
+        end
+    else
+        if c < tsc
+            send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["W"], tag=0)
+        else
+            send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["E"], tag=0)
+        end
+    end
+    MPI.Wait(send_req)
+end
+
+
+""""""
 function moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
     r = p.position[1] ÷ PRECISION
     c = p.position[2] ÷ PRECISION
@@ -194,92 +220,89 @@ function moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel
     end
     
     # TODO: If particle is outside my grid, then send it to corresponding rank.
-    send_reqs = MPI.Request[]
     if !inCartGrid(tsr, tsc, r, c, own_rows, own_cols)
-        send_msg = [p.position[1], p.position[2], p.mass, p.resistance, p.speed[1], p.speed[2], p.old_flow]
-        if tsr + own_rows < r && tsc + own_cols < c
-            if tsc + own_cols < c
-                send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["SE"], tag=0)
-                push!(send_reqs, send_req)
-            elseif c < tsc
-                send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["SW"], tag=0)
-                push!(send_reqs, send_req)
-            else
-                send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["S"], tag=0)
-                push!(send_reqs, send_req)
-            end
-        else
-            if c < tsc
-                send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["W"], tag=0)
-                push!(send_reqs, send_req)
-            else
-                send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["E"], tag=0)
-                push!(send_reqs, send_req)
-            end
-        end
+        sendParticleToNeighbor(p, cart_neighbors, tsr, tsc, r, c, own_rows, own_cols)
     end
-    MPI.Waitall(send_reqs)
 end
 
 
-""""""
+"""Sets the values of p_locs to 0 when either iter <= tunnel_rows or on all tunnel_rows."""
+function cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, cart_coord)
+    if iter <= tunnel_rows        
+        ub = min(iter - own_rows * (cart_dims[2] - 1 - cart_coord[2]), own_rows) + 1
+        for i in 2:ub , j in 2:own_cols + 1
+            p_locs[i, j] = 0
+        end
+    else
+        for i in 2:own_rows + 1, j in 2:own_cols + 1
+            p_locs[i, j] = 0 
+        end
+    end
+end
+
+
+"""
+1. Clean particle locations.
+2. Move particles with flow.
+3. Send particles to neighbors.
+4. Receive particles from neighbors.
+5. Annotate particle locations.
+"""
 function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, particles, flow, cart_comm, cart_neighbors)
     if !(iter % STEPS == 1); return end
 
-    # TODO: Clean particle locations in rank. 
-    for i in 1:own_rows, j in 1:own_cols
-        i > iter ? break : p_locs[i, j] = 0
-    end
+    # Clean particle locations in rank.
+    cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, cart_coord)
     
-    # Move particles.
-    for p in particles
-        if p.mass == 0
-            continue
-        else
-            # 1:STEPS, because the fan produces new values after STEPS iterations.
-            for i in 1:STEPS
-                updateNeighborFlow(flow, cart_neighbors, cart_comm)
-                moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
-            end
-        end
-    end
+    # # Move particles.
+    # for p in particles
+    #     if p.mass == 0
+    #         continue
+    #     else
+    #         updateNeighborFlow(flow, cart_neighbors, cart_comm)
+    #         # 1:STEPS, because the fan produces new values after STEPS iterations.
+    #         for i in 1:STEPS
+    #             moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
+    #         end
+    #     end
+    # end
 
     # TODO: Receive particles from neighbors.
-    recv_reqs = MPI.Request[]
-    recv_msg = []
-    for (k, v) in cart_neighbors
-        if k == "NW" && v >= 0
-            recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
-            push!(recv_reqs, recv_req)
-        elseif k == "NE" && v >= 0
-            recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
-            push!(recv_reqs, recv_req)
-        elseif k == "N" && v >= 0
-            recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
-            push!(recv_reqs, recv_req)
-        elseif k == "W" && v >= 0
-            recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
-            push!(recv_reqs, recv_req)
-        elseif k == "E" && v >= 0
-            recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
-            push!(recv_reqs, recv_req)
-        end
-    end
-    MPI.Waitall(recv_reqs)
-    partitioned = collect(Iterators.partition(recv_msg, 7))
-    for i in partitioned
-        push!(particles, Particle([i[1], i[2]], i[3], i[4], [i[5], i[6]], i[7]))
-    end    
+    # recv_reqs = MPI.Request[]
+    # recv_msg = Ref(0)
+    # for (k, v) in cart_neighbors
+    #     if k == "NW" && v >= 0
+    #         recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
+    #         push!(recv_reqs, recv_req)
+    #     elseif k == "NE" && v >= 0
+    #         recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
+    #         push!(recv_reqs, recv_req)
+    #     elseif k == "N" && v >= 0
+    #         recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
+    #         push!(recv_reqs, recv_req)
+    #     elseif k == "W" && v >= 0
+    #         recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
+    #         push!(recv_reqs, recv_req)
+    #     elseif k == "E" && v >= 0
+    #         recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
+    #         push!(recv_reqs, recv_req)
+    #     end
+    # end
+    # MPI.Waitall(recv_reqs)
+    # partitioned = collect(Iterators.partition(recv_msg, 7))
+    # for i in partitioned
+    #     push!(particles, Particle([i[1], i[2]], i[3], i[4], [i[5], i[6]], i[7]))
+    # end
     
-    # Annotate particle location in rank.
-    for p in particles
-        r = p.position[1] ÷ PRECISION
-        c = p.position[2] ÷ PRECISION
-        # Because p_locs is a (own_rows + 2) x (own_cols + 2) matrix.
-        pr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
-        pc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
-        p_locs[pr, pc] += 1
-    end
+    # # Annotate particle location in rank.
+    # for p in particles
+    #     r = p.position[1] ÷ PRECISION
+    #     c = p.position[2] ÷ PRECISION
+    #     # Because p_locs is a (own_rows + 2) x (own_cols + 2) matrix.
+    #     pr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
+    #     pc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
+    #     p_locs[pr, pc] += 1
+    # end
 end
 
 
