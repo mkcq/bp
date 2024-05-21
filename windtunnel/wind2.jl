@@ -162,19 +162,19 @@ function updateNeighborFlow(flow, cart_neighbors, cart_comm)
 end
 
 
-""""""
-function sendParticleToNeighbor(p, cart_neighbors, tsr, tsc, r, c, own_rows, own_cols)
+"""Does a non-blocking send of particle p to one of the following neighbors, SW, S, SE, W, E."""
+function sendParticleToNeighbor(p, cart_neighbors, tsr, tsc, own_rows, own_cols)
     send_msg = [p.position[1], p.position[2], p.mass, p.resistance, p.speed[1], p.speed[2], p.old_flow]
-    if tsr + own_rows < r && tsc + own_cols < c
-        if tsc + own_cols < c
+    if tsr + own_rows - 1 < p.position[1]
+        if tsc + own_cols - 1 < p.position[2]
             send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["SE"], tag=0)
-        elseif c < tsc
+        elseif p.position[2] < tsc
             send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["SW"], tag=0)
         else
             send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["S"], tag=0)
         end
     else
-        if c < tsc
+        if p.position[2] < tsc
             send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["W"], tag=0)
         else
             send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["E"], tag=0)
@@ -242,6 +242,7 @@ end
 
 
 """
+The outline of this function is as follows:
 1. Clean particle locations.
 2. Move particles with flow.
 3. Send particles to neighbors.
@@ -254,18 +255,18 @@ function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, par
     # Clean particle locations in rank.
     cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, cart_coord)
     
-    # # Move particles.
-    # for p in particles
-    #     if p.mass == 0
-    #         continue
-    #     else
-    #         updateNeighborFlow(flow, cart_neighbors, cart_comm)
-    #         # 1:STEPS, because the fan produces new values after STEPS iterations.
-    #         for i in 1:STEPS
-    #             moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
-    #         end
-    #     end
-    # end
+    # Move particles. First send/recv the flow of neighbors, then move the particles.
+    updateNeighborFlow(flow, cart_neighbors, cart_comm)
+    for p in particles
+        if p.mass == 0
+            continue
+        else
+            # 1:STEPS, because the fan produces new values after STEPS iterations.
+            for i in 1:STEPS
+                moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
+            end
+        end
+    end
 
     # TODO: Receive particles from neighbors.
     # recv_reqs = MPI.Request[]
