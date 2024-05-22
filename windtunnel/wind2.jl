@@ -124,7 +124,10 @@ function getNeighborRanks(cart_dims, cart_coord, cart_comm)
 end
 
 
-""""""
+"""Since flow goes from top of the tunnel to bottom of the tunnel, 
+the ranks on cart_coord[column, cart_dims[2] - 1] (columns of top row)
+only need from the east and west. 
+The ranks beneath need to receive the flow from above."""
 function updateNeighborFlow(flow, cart_neighbors, cart_comm)
     reqs = MPI.Request[]
     for (k, v) in cart_neighbors
@@ -219,10 +222,13 @@ function moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel
         p.position[2] = tunnel_cols * PRECISION
     end
     
-    # TODO: If particle is outside my grid, then send it to corresponding rank.
+    # If particle is outside my grid, then send it to corresponding rank.
     if !inCartGrid(tsr, tsc, r, c, own_rows, own_cols)
-        sendParticleToNeighbor(p, cart_neighbors, tsr, tsc, r, c, own_rows, own_cols)
+        sendParticleToNeighbor(p, cart_neighbors, tsr, tsc, own_rows, own_cols)
+        return 1
     end
+
+    return 0
 end
 
 
@@ -241,6 +247,18 @@ function cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, car
 end
 
 
+function AnnotateParticleLocation(particles, own_rows, own_cols, p_locs)
+    for p in particles
+        r = p.position[1] ÷ PRECISION
+        c = p.position[2] ÷ PRECISION
+        # Because p_locs is a (own_rows + 2) x (own_cols + 2) matrix.
+        pr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
+        pc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
+        p_locs[pr, pc] += 1
+    end
+end
+
+
 """
 The outline of this function is as follows:
 1. Clean particle locations.
@@ -255,16 +273,25 @@ function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, par
     # Clean particle locations in rank.
     cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, cart_coord)
     
+    # TODO: Do we first want to recv and then send or the other way around?
+    
     # Move particles. First send/recv the flow of neighbors, then move the particles.
     updateNeighborFlow(flow, cart_neighbors, cart_comm)
-    for p in particles
-        if p.mass == 0
-            continue
+    i = 1
+    while i <= length(particles)
+        del = 0
+        if particles[i].mass == 0
+            i += 1
         else
             # 1:STEPS, because the fan produces new values after STEPS iterations.
-            for i in 1:STEPS
-                moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
+            for j in 1:STEPS
+                del = moveParticle(flow, particles[i], tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
+                if del == 1
+                    break
+                end
             end
+
+            del == 1 ? deleteat!(particles, i) : i += 1
         end
     end
 
@@ -295,15 +322,8 @@ function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, par
     #     push!(particles, Particle([i[1], i[2]], i[3], i[4], [i[5], i[6]], i[7]))
     # end
     
-    # # Annotate particle location in rank.
-    # for p in particles
-    #     r = p.position[1] ÷ PRECISION
-    #     c = p.position[2] ÷ PRECISION
-    #     # Because p_locs is a (own_rows + 2) x (own_cols + 2) matrix.
-    #     pr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
-    #     pc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
-    #     p_locs[pr, pc] += 1
-    # end
+    # Annotate particle location in rank.
+    AnnotateParticleLocation(particles, own_rows, own_cols, p_locs)
 end
 
 

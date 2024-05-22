@@ -152,7 +152,7 @@ append!(ARGS, ["tr", "tc", "mi", "th", "fp", "fs", "fbp", "fbs", "fd", "mbp", "m
     @test particles3[1].position == [5, 6] * PRECISION
 end
 
-# # TODO: Make this test cleaner.
+# TODO: Make this test cleaner.
 @testset "getNeighborRanks 2c x 2r" begin
     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
     using Test
@@ -266,58 +266,6 @@ end
 #             @show n["W"] == 1
 #         end; MPI.Barrier(cart_comm)
 #     end
-# end
-
-# TODO: Not complete.
-# @testset "moveParticle" begin
-#     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
-#     using Test
-#     include("wind2.jl")
-
-#     append!(ARGS, ["tr", "tc", "mi", "th", "fp", "fs", "fbp", "fbs", "fd", "mbp", "mbs", "md", "rs1", "rs2", "rs3", "5", "5", "0.5", "5", "6", "0.5", "6", "5", "0.5", "6", "6","0.5"])
-
-#     tunnel_rows = 10
-#     tunnel_cols = 10
-    
-#     MPI.Init()
-#     comm = MPI.Comm_dup(MPI.COMM_WORLD)
-#     n_ranks = MPI.Comm_size(comm)
-#     rank = MPI.Comm_rank(comm)
-#     cart_dims = getCartDims(n_ranks)
-#     periodic = map(_ -> false, cart_dims)
-#     reorder = false
-#     cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
-#     cart_coord = MPI.Cart_coords(cart_comm)
-#     cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
-
-#     own_cols = tunnel_cols ÷ cart_dims[1]
-#     own_rows = tunnel_rows ÷ cart_dims[2]
-#     tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
-#     tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
-
-#     n_ps = (length(ARGS) - 15) ÷ 3
-#     ps::Vector{Particle} = []
-#     readFixedParticles(1, n_ps, tsr, tsc, own_rows, own_cols, ps)
-
-#     flow = zeros(Int, own_rows + 2, own_cols + 2); flow[1, :] = flow[end, :] .= -1; flow[:, 1] = flow[:, end] .= -1
-#     p_locs = zeros(Int, own_rows + 2, own_cols + 2); p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
-
-#     for iter in 1:10
-#         updateFan(iter, 2, 8, flow, cart_dims, cart_coord, tunnel_cols, own_cols)
-#         particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, ps, flow, cart_comm, cart_neighbors)
-#     end
-
-#     # rcv = MPI.Gather(flow, cart_comm;root=0)
-#     # if rank == 0
-#     #     result = zeros(Int, tunnel_rows + 2, tunnel_cols + 2)
-#     #     result[1,:] = result[end,:] = result[:,1] = result[:,end] .= -1
-#     #     inner_result = view(result, 2:tunnel_rows + 1, 2:tunnel_cols + 1)
-#     #     partitioned = collect(Iterators.partition(rcv, (own_rows + 2) * (own_cols + 2)))
-#     #     matrices = [reshape(partitioned[i], own_rows + 2, own_cols + 2) for i in 1:n_ranks]
-#     #     inner_result .= [view(matrices[2], 2:own_rows+1, 2:own_cols+1) view(matrices[4], 2:own_rows+1, 2:own_cols+1);view(matrices[1], 2:own_rows+1, 2:own_cols+1) view(matrices[3], 2:own_rows+1, 2:own_cols+1)]
-#     #     display(inner_result)
-#     # end
-#     '`))
 # end
 
 @testset "sendParticleToNeighbor S SE E" begin
@@ -435,9 +383,9 @@ end
     else
         @test length(ps) == 0
     end
+
     '`))
 end
-
 
 @testset "cleanParticleLocations" begin 
     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
@@ -481,3 +429,208 @@ end
     end
     '`))
 end
+
+@testset "updateNeighborFlow" begin
+    mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+    using Test
+    include("wind2.jl")
+
+    tunnel_rows = 10
+    tunnel_cols = 10
+    
+    MPI.Init()
+    comm = MPI.Comm_dup(MPI.COMM_WORLD)
+    n_ranks = MPI.Comm_size(comm)
+    rank = MPI.Comm_rank(comm)
+    cart_dims = getCartDims(n_ranks)
+    periodic = map(_ -> false, cart_dims)
+    reorder = false
+    cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+    cart_coord = MPI.Cart_coords(cart_comm)
+    cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+    
+    own_cols = tunnel_cols ÷ cart_dims[1]
+    own_rows = tunnel_rows ÷ cart_dims[2]
+
+    flow = zeros(Int, own_rows + 2, own_cols + 2)
+    flow[1, :] = flow[end, :] .= -1
+    flow[:, 1] = flow[:, end] .= -1
+    flow[2:own_rows + 1, 2:own_cols + 1] .= rank
+
+    updateNeighborFlow(flow, cart_neighbors, cart_comm)
+    
+    if rank == 0
+        for c in 2:own_cols + 1
+            @test flow[1, c] == 1
+        end
+
+        @test flow[1, own_cols + 2] == 3
+        
+        for r in 2:own_rows + 1
+            @test flow[r, own_cols + 2] == 2
+        end
+    elseif rank == 1
+        for r in 2:own_rows + 1
+            @test flow[r, own_cols + 2] == 3
+        end
+    elseif rank == 2
+        for c in 2:own_cols + 1
+            @test flow[1, c] == 3
+        end
+
+        @test flow[1, 1] == 1
+
+        for r in 2:own_rows + 1
+            @test flow[r, 1] == 0
+        end
+    elseif rank == 3
+        for r in 2:own_rows + 1
+            @test flow[r, 1] == 1
+        end
+    end
+
+    # if rank == 0; display(flow) end; MPI.Barrier(cart_comm)
+    # if rank == 1; display(flow) end; MPI.Barrier(cart_comm)
+    # if rank == 2; display(flow) end; MPI.Barrier(cart_comm)
+    # if rank == 3; display(flow) end; MPI.Barrier(cart_comm)
+    '`))
+end
+
+@testset "AnnotateParticleLocation" begin
+    mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+    using Test
+    include("wind2.jl")
+
+    tunnel_rows = 10
+    tunnel_cols = 10
+    
+    MPI.Init()
+    comm = MPI.Comm_dup(MPI.COMM_WORLD)
+    n_ranks = MPI.Comm_size(comm)
+    rank = MPI.Comm_rank(comm)
+    cart_dims = getCartDims(n_ranks)
+    periodic = map(_ -> false, cart_dims)
+    reorder = false
+    cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+    cart_coord = MPI.Cart_coords(cart_comm)
+    cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+    
+    own_cols = tunnel_cols ÷ cart_dims[1]
+    own_rows = tunnel_rows ÷ cart_dims[2]
+    tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
+    tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
+
+    p_locs = zeros(Int, own_rows + 2, own_cols + 2)
+    p_locs[1, :] = p_locs[end, :] .= -1
+    p_locs[:, 1] = p_locs[:, end] .= -1
+
+    ps::Vector{Particle} = []
+
+    append!(ARGS, ["tr", "tc", "mi", "th", "fp", "fs", "fbp", "fbs", "fd", "mbp", "mbs", "md", "rs1", "rs2", "rs3"
+    , "1", "1", "0.3", "5", "5", "0.3", "1", "5", "0.3", "5", "1", "0.3", "4", "4", "0.3"
+    , "6", "1", "0.3", "10", "1", "0.3", "6", "5", "0.3", "10", "5", "0.3", "7", "4", "0.3"
+    , "1", "6", "0.3", "5", "6", "0.3", "1", "10", "0.3", "5", "10", "0.3", "3", "8", "0.3"
+    , "6", "6", "0.3", "10", "6", "0.3", "10", "10", "0.3", "6", "10", "0.3", "7", "8", "0.3", "7", "8", "0.6"])
+    
+    lb = 1
+    ub = (length(ARGS) - 15) ÷ 3
+    readFixedParticles(lb, ub, tsr, tsc, own_rows, own_cols, ps)
+    MPI.Barrier(cart_comm)
+
+    AnnotateParticleLocation(ps, own_rows, own_cols, p_locs)
+
+    # if rank == 0; println(rank); display(p_locs) end; MPI.Barrier(cart_comm)
+    # if rank == 1; println(rank); display(p_locs) end; MPI.Barrier(cart_comm)
+    # if rank == 2; println(rank); display(p_locs) end; MPI.Barrier(cart_comm)
+    # if rank == 3; println(rank); display(p_locs) end; MPI.Barrier(cart_comm)
+
+    @test p_locs[2, 2] == 1
+    @test p_locs[6, 6] == 1
+    @test p_locs[2, 6] == 1
+    @test p_locs[6, 2] == 1
+    if rank == 0
+        @test p_locs[3, 5] == 1
+    elseif rank == 1
+        @test p_locs[5, 5] == 1
+    elseif rank == 2
+        @test p_locs[3, 4] == 2
+    elseif rank == 3
+        @test p_locs[4, 4] == 1
+    end
+
+    '`))
+end
+
+# TODO: Not complete.
+# @testset "moveParticle" begin 
+#     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+#     using Test
+#     include("wind2.jl")
+
+#     tunnel_rows = 10
+#     tunnel_cols = 10
+#     fp = 1
+#     fs = 9
+
+#     append!(ARGS, ["tr", "tc", "mi", "th", "fp", "fs", "fbp", "fbs", "fd", "mbp", "mbs", "md", "rs1", "rs2", "rs3", "5", "5", "0.5", "5", "6", "0.5", "6", "5", "0.5", "6", "6","0.5"])
+
+#     MPI.Init()
+#     comm = MPI.Comm_dup(MPI.COMM_WORLD)
+#     n_ranks = MPI.Comm_size(comm)
+#     rank = MPI.Comm_rank(comm)
+#     cart_dims = getCartDims(n_ranks)
+#     periodic = map(_ -> false, cart_dims)
+#     reorder = false
+#     cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+#     cart_coord = MPI.Cart_coords(cart_comm)
+#     cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+    
+#     own_cols = tunnel_cols ÷ cart_dims[1]
+#     own_rows = tunnel_rows ÷ cart_dims[2]
+
+#     tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
+#     tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
+
+#     particles::Vector{Particle} = []
+#     lb = 1;
+#     ub = (length(ARGS) - 15) ÷ 3
+#     readFixedParticles(lb, ub, tsr, tsc, own_rows, own_cols, particles)
+
+#     flow = zeros(Int, own_rows + 2, own_cols + 2); flow[1, :] = flow[end, :] .= -1; flow[:, 1] = flow[:, end] .= -1
+#     p_locs = zeros(Int, own_rows + 2, own_cols + 2); p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
+
+#     if rank == 0; println(" Start simulation. ") end; MPI.Barrier(cart_comm)
+
+#     for iter in 1:10
+        
+#         updateFan(iter, fp + 1, fs, flow, cart_dims, cart_coord, tunnel_cols, own_cols)
+        
+#         if (iter % STEPS == 1)
+#             cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, cart_coord)
+    
+#             updateNeighborFlow(flow, cart_neighbors, cart_comm)
+#             i = 1
+#             while i <= length(particles)
+#                 del = 0
+#                 # if particles[i].mass == 0
+#                 #     continue
+#                 # else
+#                 #     for j in 1:STEPS
+#                 #         del = moveParticle(flow, particles[i], tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
+#                 #         if del == 1
+#                 #             break
+#                 #         else
+#                 #     end
+                    
+#                 #     del == 1 ? deleteat!(particles, i): i += 1
+#                 # end
+#             end
+#         end
+
+#         MPI.Barrier(cart_comm)
+#     end
+
+#     if rank == 0; println(" End simulation. ") end; MPI.Barrier(cart_comm)
+
+#     '`))
+# end
