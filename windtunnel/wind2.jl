@@ -165,28 +165,6 @@ function updateNeighborFlow(flow, cart_neighbors, cart_comm)
 end
 
 
-"""Does a non-blocking send of particle p to one of the following neighbors, SW, S, SE, W, E."""
-function sendParticleToNeighbor(p, cart_neighbors, tsr, tsc, own_rows, own_cols)
-    send_msg = [p.position[1], p.position[2], p.mass, p.resistance, p.speed[1], p.speed[2], p.old_flow]
-    if tsr + own_rows - 1 < p.position[1]
-        if tsc + own_cols - 1 < p.position[2]
-            send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["SE"], tag=0)
-        elseif p.position[2] < tsc
-            send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["SW"], tag=0)
-        else
-            send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["S"], tag=0)
-        end
-    else
-        if p.position[2] < tsc
-            send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["W"], tag=0)
-        else
-            send_req = MPI.Isend(send_msg, cart_comm;dest=cart_neighbors["E"], tag=0)
-        end
-    end
-    MPI.Wait(send_req)
-end
-
-
 """"""
 function moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
     r = p.position[1] ÷ PRECISION
@@ -212,7 +190,7 @@ function moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel
     p.position[1] = p.position[1] + p.speed[1] ÷ STEPS ÷ 2
     p.position[2] = p.position[2] + p.speed[2] ÷ STEPS ÷ 2        
     
-    # TODO: Control limits.
+    # Control limits. Particle must stay in the tunnel.
     if p.position[1] > tunnel_rows * PRECISION
         p.position[1] = tunnel_rows * PRECISION
     end
@@ -222,13 +200,134 @@ function moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel
         p.position[2] = tunnel_cols * PRECISION
     end
     
-    # If particle is outside my grid, then send it to corresponding rank.
     if !inCartGrid(tsr, tsc, r, c, own_rows, own_cols)
-        sendParticleToNeighbor(p, cart_neighbors, tsr, tsc, own_rows, own_cols)
         return 1
     end
 
     return 0
+end
+
+
+"""Function first appends outgoing_particles in vectors of following directions: S, SW, SE, W and E. 
+If there are no outgoing_particles, then the vectors contain one value of -1.
+
+Second, the function does a non-blocking send to all directions mentioned above.
+
+Last, after sending the outgoing_particles, all elements of outgoing_particles are deleted.
+"""
+function sendParticlesToNeighbors(outgoing_particles, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
+    
+    reqs = MPI.Request[]
+    send_SE::Vector{Int} = []
+    send_SW::Vector{Int} = []
+    send_S::Vector{Int} = []
+    send_E::Vector{Int} = []
+    send_W::Vector{Int} = []
+
+    # Insert all outgoing_particles in the buffer corresponding to the neighbor.
+    if length(outgoing_particles) > 0
+        for p in outgoing_particles
+            send_particle = [p.position[1], p.position[2], p.mass, p.resistance, p.speed[1], p.speed[2], p.old_flow]
+            if tsr + own_rows - 1 < p.position[1]
+                if tsc + own_cols - 1 < p.position[2]
+                    append!(send_SE, send_particle)
+                elseif p.position[2] < tsc
+                    append!(send_SW, send_particle)
+                else
+                    append!(send_S, send_particle)
+                end
+            else
+                if p.position[2] < tsc
+                    append!(send_W, send_particle)
+                else
+                    append!(send_E, send_particle)
+                end
+            end
+        end
+    end
+
+    # If there is something to send, then insert in correct request buffer.
+    for (k, v) in cart_neighbors
+        if k == "SE" && v >= 0
+            if length(send_SE) == 0
+                send_SE = [-1]
+            end
+            send_req = MPI.Isend(send_SE, cart_comm;dest=v, tag=0)
+            push!(reqs, send_req)
+        elseif k == "SW" && v >= 0
+            if length(send_SW) == 0
+                send_SW = [-1]
+            end
+            send_req = MPI.Isend(send_SW, cart_comm;dest=v, tag=0)
+            push!(reqs, send_req)
+        elseif k == "S" && v >= 0
+            if length(send_S) == 0
+                send_S = [-1]
+            end
+            send_req = MPI.Isend(send_S, cart_comm;dest=v, tag=0)
+            push!(reqs, send_req)
+        elseif k == "W" && v >= 0
+            if length(send_W) == 0
+                send_W = [-1]
+            end
+            send_req = MPI.Isend(send_W, cart_comm;dest=v, tag=0)
+            push!(reqs, send_req)
+        elseif k == "E" && v >= 0
+            if length(send_E) == 0
+                send_E = [-1]
+            end
+            send_req = MPI.Isend(send_E, cart_comm;dest=v, tag=0)
+            push!(reqs, send_req)
+        end
+    end
+    
+    MPI.Waitall(reqs)
+
+    while true
+        length(outgoing_particles) == 0 ? break : deleteat!(outgoing_particles, 1)
+    end
+end
+
+
+"""Receives from one of the following directions: N, NW, NE, W, E. 
+Appends total_recv only if the size of received message > 1."""
+function recvParticlesFromDirection(cart_comm, src, total_recv)
+    status = MPI.Probe(cart_comm, MPI.Status;source=src, tag=0)
+    num = MPI.Get_count(status, Int)
+    recvbuf = Array{Int}(undef, num)
+    MPI.Recv!(recvbuf, cart_comm;source=src, tag=0)
+    if num > 1
+        append!(total_recv, recvbuf)
+    end
+end
+
+
+"""Function goes over all neighbors and receives particles from them. 
+Received particles are insterted in incoming_particles."""
+function recvParticlesFromNeighbors(incoming_particles, cart_neighbors, cart_comm)
+
+    total_recv::Vector{Int} = []
+
+    for (k, v) in cart_neighbors
+    
+        if k == "N" && v >= 0
+            recvParticlesFromDirection(cart_comm, v, total_recv)
+        elseif k == "NW" && v >= 0
+            recvParticlesFromDirection(cart_comm, v, total_recv)
+        elseif k == "NE" && v >= 0 
+            recvParticlesFromDirection(cart_comm, v, total_recv)
+        elseif k == "W" && v >= 0
+            recvParticlesFromDirection(cart_comm, v, total_recv)
+        elseif k == "E" && v >= 0
+            recvParticlesFromDirection(cart_comm, v, total_recv)
+        end
+
+    end
+
+    partitioned = collect(Iterators.partition(total_recv, 7))
+    for i in partitioned
+        push!(incoming_particles, Particle([i[1], i[2]], i[3], i[4], [i[5], i[6]], i[7]))
+    end
 end
 
 
@@ -247,6 +346,7 @@ function cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, car
 end
 
 
+"""Updates the values of p_locs with the particles in own rank."""
 function AnnotateParticleLocation(particles, own_rows, own_cols, p_locs)
     for p in particles
         r = p.position[1] ÷ PRECISION
@@ -260,67 +360,52 @@ end
 
 
 """
-The outline of this function is as follows:
+The outline of this function:
 1. Clean particle locations.
 2. Move particles with flow.
 3. Send particles to neighbors.
 4. Receive particles from neighbors.
 5. Annotate particle locations.
 """
-function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, particles, flow, cart_comm, cart_neighbors)
+function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, incoming_particles, outgoing_particles, flow, cart_comm, cart_neighbors)
     if !(iter % STEPS == 1); return end
 
     # Clean particle locations in rank.
     cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, cart_coord)
     
-    # TODO: Do we first want to recv and then send or the other way around?
-    
     # Move particles. First send/recv the flow of neighbors, then move the particles.
     updateNeighborFlow(flow, cart_neighbors, cart_comm)
+
     i = 1
-    while i <= length(particles)
-        del = 0
-        if particles[i].mass == 0
+    del = 0
+    while i <= length(incoming_particles)
+        if incoming_particles[i].mass == 0
             i += 1
         else
-            # 1:STEPS, because the fan produces new values after STEPS iterations.
             for j in 1:STEPS
-                del = moveParticle(flow, particles[i], tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
+                del = moveParticle(flow, incoming_particles[i], tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
                 if del == 1
                     break
                 end
             end
 
-            del == 1 ? deleteat!(particles, i) : i += 1
+            if del == 1
+                push!(outgoing_particles, incoming_particles[i])
+                deleteat!(incoming_particles, i)
+                del = 0
+            else
+                i += 1
+            end
         end
     end
 
-    # TODO: Receive particles from neighbors.
-    # recv_reqs = MPI.Request[]
-    # recv_msg = Ref(0)
-    # for (k, v) in cart_neighbors
-    #     if k == "NW" && v >= 0
-    #         recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
-    #         push!(recv_reqs, recv_req)
-    #     elseif k == "NE" && v >= 0
-    #         recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
-    #         push!(recv_reqs, recv_req)
-    #     elseif k == "N" && v >= 0
-    #         recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
-    #         push!(recv_reqs, recv_req)
-    #     elseif k == "W" && v >= 0
-    #         recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
-    #         push!(recv_reqs, recv_req)
-    #     elseif k == "E" && v >= 0
-    #         recv_req = MPI.Irecv!(recv_msg, cart_comm;source=v, tag=0)
-    #         push!(recv_reqs, recv_req)
-    #     end
-    # end
-    # MPI.Waitall(recv_reqs)
-    # partitioned = collect(Iterators.partition(recv_msg, 7))
-    # for i in partitioned
-    #     push!(particles, Particle([i[1], i[2]], i[3], i[4], [i[5], i[6]], i[7]))
-    # end
+    if isodd(cart_coord[2])
+        sendParticlesToNeighbors(outgoing_particles, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
+        recvParticlesFromNeighbors(incoming_particles, cart_neighbors, cart_comm)
+    else
+        recvParticlesFromNeighbors(incoming_particles, cart_neighbors, cart_comm)
+        sendParticlesToNeighbors(outgoing_particles, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
+    end
     
     # Annotate particle location in rank.
     AnnotateParticleLocation(particles, own_rows, own_cols, p_locs)
