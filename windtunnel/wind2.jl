@@ -4,6 +4,8 @@ using Random
 PRECISION = 10000
 STEPS = 8
 
+global rrr = 0
+
 """Position as [tunnel_row, tunnel_column] and speed as [row, column]."""
 mutable struct Particle
     position::Vector
@@ -124,39 +126,48 @@ function getNeighborRanks(cart_dims, cart_coord, cart_comm)
 end
 
 
-"""Since flow goes from top of the tunnel to bottom of the tunnel, 
-the ranks on cart_coord[column, cart_dims[2] - 1] (columns of top row)
-only need from the east and west. 
-The ranks beneath need to receive the flow from above."""
-function updateNeighborFlow(flow, cart_neighbors, cart_comm)
+"""Function does a non-blocking send to distribute the flow to below. The directions are: S, SW, SE, W and E."""
+function sendFlowToNeighbors(flow, cart_neighbors, cart_comm)
     reqs = MPI.Request[]
     for (k, v) in cart_neighbors
-        if v >= 0 && k == "NW"
-            req = MPI.Irecv!(view(flow, 1, 1), cart_comm;source=v, tag=0)
-            push!(reqs, req)
-        elseif v >= 0 && k == "NE"
-            req = MPI.Irecv!(view(flow, 1, own_cols + 2), cart_comm;source=v, tag=0)
-            push!(reqs, req)
-        elseif v >= 0 && k == "N"
-            req = MPI.Irecv!(view(flow, 1, 2:own_cols + 1), cart_comm;source=v, tag=0)
-            push!(reqs, req)
-        elseif v >= 0 && k == "SW"
-            req = MPI.Isend(view(flow, own_rows + 1, 2), cart_comm;dest=v, tag=0)
-            push!(reqs, req)
-        elseif v >=0 && k == "SE"
-            req = MPI.Isend(view(flow, own_rows + 1, own_cols + 1), cart_comm;dest=v, tag=0)
-            push!(reqs, req)
-        elseif v >= 0 && k == "S"
+        if k == "S" && v >= 0
             req = MPI.Isend(view(flow, own_rows + 1, 2:own_cols + 1), cart_comm;dest=v, tag=0)
             push!(reqs, req)
-        elseif v >= 0 && k == "W"
+        elseif k == "SW" && v >= 0
+            req = MPI.Isend(view(flow, own_rows + 1, 2), cart_comm;dest=v, tag=0)
+            push!(reqs, req)
+        elseif k == "SE" && v >= 0
+            req = MPI.Isend(view(flow, own_rows + 1, own_cols + 1), cart_comm;dest=v, tag=0)
+            push!(reqs, req)
+        elseif k == "W" && v >= 0
             req = MPI.Isend(view(flow, 2:own_rows + 1, 2), cart_comm;dest=v, tag=0)
             push!(reqs, req)
-            req = MPI.Irecv!(view(flow, 2:own_rows + 1, 1), cart_comm;source=v, tag=0)
-            push!(reqs, req)
-        elseif v >= 0 && k == "E"
+        elseif k == "E" && v >= 0
             req = MPI.Isend(view(flow, 2:own_rows + 1, own_cols + 1), cart_comm;dest=v, tag=0)
             push!(reqs, req)
+        end
+    end
+    MPI.Waitall(reqs)
+end
+
+
+"""Function does a non-blocking receive to gather the flow from above. The directions are: N, NW, NE, W and E."""
+function recvFlowFromNeighbors(flow, cart_neighbors, cart_comm)
+    reqs = MPI.Request[]
+    for (k, v) in cart_neighbors
+        if k == "N" && v >= 0
+            req = MPI.Irecv!(view(flow, 1, 2:own_cols + 1), cart_comm;source=v, tag=0)
+            push!(reqs, req)
+        elseif k == "NW" && v >= 0
+            req = MPI.Irecv!(view(flow, 1, 1), cart_comm;source=v, tag=0)
+            push!(reqs, req)
+        elseif k == "NE" && v >= 0
+            req = MPI.Irecv!(view(flow, 1, own_cols + 2), cart_comm;source=v, tag=0)
+            push!(reqs, req)
+        elseif k == "W" && v >= 0
+            req = MPI.Irecv!(view(flow, 2:own_rows + 1, 1), cart_comm;source=v, tag=0)
+            push!(reqs, req)
+        elseif k == "E" && v >= 0
             req = MPI.Irecv!(view(flow, 2:own_rows + 1, own_cols + 2), cart_comm;source=v, tag=0)
             push!(reqs, req)
         end
@@ -174,7 +185,7 @@ function moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel
     fr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
     fc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
 
-    # Data dependencies received by updateNeighborFlow.
+    # Data dependencies received by recvFlowFromNeighbors.
     pressure = flow[fr - 1, fc]
     left = c == 1 ? 0 : pressure - flow[fr - 1, fc - 1]
     right = c == tunnel_cols ? 0 : pressure - flow[fr - 1, fc + 1]
@@ -347,8 +358,8 @@ end
 
 
 """Updates the values of p_locs with the particles in own rank."""
-function AnnotateParticleLocation(particles, own_rows, own_cols, p_locs)
-    for p in particles
+function AnnotateParticleLocation(incoming_particles, own_rows, own_cols, p_locs)
+    for p in incoming_particles
         r = p.position[1] ÷ PRECISION
         c = p.position[2] ÷ PRECISION
         # Because p_locs is a (own_rows + 2) x (own_cols + 2) matrix.
@@ -362,26 +373,36 @@ end
 """
 The outline of this function:
 1. Clean particle locations.
-2. Move particles with flow.
-3. Send particles to neighbors.
-4. Receive particles from neighbors.
-5. Annotate particle locations.
+2. Update flow by receving from neighbors.
+3. Move particles with flow.
+4. If odd first send then receive.
+5. If even first receive then send.
+6. Annotate particle locations.
 """
-function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, incoming_particles, outgoing_particles, flow, cart_comm, cart_neighbors)
+function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, 
+    p_locs, flow,
+    incoming_particles, outgoing_particles, 
+    cart_comm, cart_dims, cart_coord, cart_neighbors)
     if !(iter % STEPS == 1); return end
 
     # Clean particle locations in rank.
     cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, cart_coord)
     
-    # Move particles. First send/recv the flow of neighbors, then move the particles.
-    updateNeighborFlow(flow, cart_neighbors, cart_comm)
+    # Move particles. First send/recv the flow of neighbors, then move the particles.    
+    # if isodd(cart_coord[2])
+    #     sendFlowToNeighbors(flow, cart_neighbors, cart_comm)
+    #     recvFlowFromNeighbors(flow, cart_neighbors, cart_comm)
+    # else
+    #     recvFlowFromNeighbors(flow, cart_neighbors, cart_comm)
+    #     sendFlowToNeighbors(flow, cart_neighbors, cart_comm)
+    # end
+    sendFlowToNeighbors(flow, cart_neighbors, cart_comm)
+    recvFlowFromNeighbors(flow, cart_neighbors, cart_comm)
 
     i = 1
     del = 0
     while i <= length(incoming_particles)
-        if incoming_particles[i].mass == 0
-            i += 1
-        else
+        if incoming_particles[i].mass != 0
             for j in 1:STEPS
                 del = moveParticle(flow, incoming_particles[i], tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
                 if del == 1
@@ -393,22 +414,23 @@ function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, inc
                 push!(outgoing_particles, incoming_particles[i])
                 deleteat!(incoming_particles, i)
                 del = 0
-            else
-                i += 1
             end
         end
+        i += 1
     end
 
-    if isodd(cart_coord[2])
-        sendParticlesToNeighbors(outgoing_particles, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
-        recvParticlesFromNeighbors(incoming_particles, cart_neighbors, cart_comm)
-    else
-        recvParticlesFromNeighbors(incoming_particles, cart_neighbors, cart_comm)
-        sendParticlesToNeighbors(outgoing_particles, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
-    end
+    # if isodd(cart_coord[2])
+    #     sendParticlesToNeighbors(outgoing_particles, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
+    #     recvParticlesFromNeighbors(incoming_particles, cart_neighbors, cart_comm)
+    # else
+    #     recvParticlesFromNeighbors(incoming_particles, cart_neighbors, cart_comm)
+    #     sendParticlesToNeighbors(outgoing_particles, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
+    # end
+    sendParticlesToNeighbors(outgoing_particles, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
+    recvParticlesFromNeighbors(incoming_particles, cart_neighbors, cart_comm)
     
     # Annotate particle location in rank.
-    AnnotateParticleLocation(particles, own_rows, own_cols, p_locs)
+    AnnotateParticleLocation(incoming_particles, own_rows, own_cols, p_locs)
 end
 
 
@@ -459,11 +481,12 @@ function main()
 
     # Read particles form the arugments and only add them if the are within own cartesian grid cell.
     n_particles = (length(ARGS) - 15) ÷ 3
-    particles::Vector{Particle} = []
+    incoming_particles::Vector{Particle} = []
+    outgoing_particles::Vector{Particle} = []
 
     tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
     tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
-    readFixedParticles(1, n_particles, tsr, tsc, own_rows, own_cols, particles)
+    readFixedParticles(1, n_particles, tsr, tsc, own_rows, own_cols, incoming_particles)
 
     # Initialization for parallelization.
     flow = zeros(Int, own_rows + 2, own_cols + 2)          # With ghostcell. Tunnel air flow.
@@ -479,7 +502,7 @@ function main()
         updateFan(iter, fan_pos + 1, fan_size, flow, cart_dims, cart_coord, tunnel_cols, own_cols)    
         
         # Particles movement each STEPS iterations.
-        particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, particles, flow, cart_comm, cart_neighbors)
+        particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, flow, incoming_particles, outgoing_particles, cart_comm, cart_dims, cart_coord, cart_neighbors)        
         
         # Effects due to particles each STEPS iterations.
 

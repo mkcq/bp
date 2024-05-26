@@ -96,7 +96,7 @@ end
 end
 
 @testset "updateFan 2c x 1r" begin
-    maxiter = 1; fp = 3; fs = 5
+    maxiter = 9; fp = 3; fs = 5
     cart_dims = [2, 1]; cart_coord = [[0, 0], [1, 0]]
     tunnel_cols = 10; tunnel_rows = 6
     own_cols = tunnel_cols ÷ cart_dims[1]; own_rows = tunnel_rows ÷ cart_dims[2]
@@ -107,12 +107,17 @@ end
     for iter in 1:maxiter
         updateFan(iter, fp + 1, fs, flow0, cart_dims, cart_coord[1], tunnel_cols, own_cols)
         updateFan(iter, fp + 1, fs, flow1, cart_dims, cart_coord[2], tunnel_cols, own_cols)
+        ll = view(flow0, 2:own_rows + 1, 2:own_cols + 1)
+        rr = view(flow1, 2:own_rows + 1, 2:own_cols + 1)
+        ress = hcat(ll, rr)
+        display(ress)
     end
 
+    println("\n###\nAfter $maxiter iterations.\n###\n")
     l = view(flow0, 2:own_rows + 1, 2:own_cols + 1)
     r = view(flow1, 2:own_rows + 1, 2:own_cols + 1)
     res = hcat(l, r)
-    # display(res)
+    display(res)
 
     for j in 1:own_cols
         (fp <= j && j < fp + fs) ? (@test res[1, j] != 0) : @test res[1, j] == 0
@@ -257,7 +262,7 @@ end
     '`))
 end
 
-@testset "updateNeighborFlow" begin
+@testset "sendFlowToNeighbors and recvFlowFromNeighbors" begin
     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
     using Test
     include("wind2.jl")
@@ -283,8 +288,9 @@ end
     flow[1, :] = flow[end, :] .= -1
     flow[:, 1] = flow[:, end] .= -1
     flow[2:own_rows + 1, 2:own_cols + 1] .= rank
-
-    updateNeighborFlow(flow, cart_neighbors, cart_comm)
+    
+    sendFlowToNeighbors(flow, cart_neighbors, cart_comm)
+    recvFlowFromNeighbors(flow, cart_neighbors, cart_comm)
     
     if rank == 0
         for c in 2:own_cols + 1
@@ -388,174 +394,243 @@ end
     '`))
 end
 
-@testset "sendParticlesToNeighbors S SE E" begin
-    mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
-    using Test
-    include("wind2.jl")
+# @testset "sendParticlesToNeighbors S SE E" begin
+#     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+#     using Test
+#     include("wind2.jl")
 
-    tunnel_rows = 10
-    tunnel_cols = 10
+#     tunnel_rows = 10
+#     tunnel_cols = 10
     
-    MPI.Init()
-    comm = MPI.Comm_dup(MPI.COMM_WORLD)
-    n_ranks = MPI.Comm_size(comm)
-    rank = MPI.Comm_rank(comm)
-    cart_dims = getCartDims(n_ranks)
-    periodic = map(_ -> false, cart_dims)
-    reorder = false
-    cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
-    cart_coord = MPI.Cart_coords(cart_comm)
-    cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+#     MPI.Init()
+#     comm = MPI.Comm_dup(MPI.COMM_WORLD)
+#     n_ranks = MPI.Comm_size(comm)
+#     rank = MPI.Comm_rank(comm)
+#     cart_dims = getCartDims(n_ranks)
+#     periodic = map(_ -> false, cart_dims)
+#     reorder = false
+#     cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+#     cart_coord = MPI.Cart_coords(cart_comm)
+#     cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
     
-    own_cols = tunnel_cols ÷ cart_dims[1]
-    own_rows = tunnel_rows ÷ cart_dims[2]
-    tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
-    tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
+#     own_cols = tunnel_cols ÷ cart_dims[1]
+#     own_rows = tunnel_rows ÷ cart_dims[2]
+#     tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
+#     tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
     
-    n_ps = (length(ARGS) - 15) ÷ 3
-    ips::Vector{Particle} = []
-    ops::Vector{Particle} = []
+#     n_ps = (length(ARGS) - 15) ÷ 3
+#     ips::Vector{Particle} = []
+#     ops::Vector{Particle} = []
 
-    if rank == 1
-        push!(ops, Particle([6, 5], 1, 2, [3, 4], 7)) # Send to 0
-        push!(ops, Particle([6, 6], 1, 2, [3, 4], 7)) # Send to 2
-        push!(ops, Particle([5, 6], 1, 2, [3, 4], 7)) # Send to 3
+#     if rank == 1
+#         push!(ops, Particle([6, 5], 1, 2, [3, 4], 7)) # Send to 0
+#         push!(ops, Particle([6, 6], 1, 2, [3, 4], 7)) # Send to 2
+#         push!(ops, Particle([5, 6], 1, 2, [3, 4], 7)) # Send to 3
         
-        sendParticlesToNeighbors(ops, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
-    end
+#         sendParticlesToNeighbors(ops, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
+#     end
 
-    # println(" $rank : $ops. Sending")
-    MPI.Barrier(cart_comm)
+#     # println(" $rank : $ops. Sending")
+#     MPI.Barrier(cart_comm)
 
-    if rank == 1
-        @test length(ops) == 0
-    else
-        rb = Array{Int}(undef, 7)
-        rs = MPI.Irecv!(rb, cart_comm;source=1, tag=0)
-        MPI.Wait(rs)
-        push!(ips, Particle([rb[1], rb[2]], rb[3], rb[4], [rb[5], rb[6]], rb[7]))
-    end
-    # println(" $rank : $ips. Receiving. ")
-    '`))
-end
+#     if rank == 1
+#         @test length(ops) == 0
+#     else
+#         rb = Array{Int}(undef, 7)
+#         rs = MPI.Irecv!(rb, cart_comm;source=1, tag=0)
+#         MPI.Wait(rs)
+#         push!(ips, Particle([rb[1], rb[2]], rb[3], rb[4], [rb[5], rb[6]], rb[7]))
+#     end
+#     # println(" $rank : $ips. Receiving. ")
+#     '`))
+# end
 
-@testset "sendParticlesToNeighbors SW W" begin
-    mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
-    using Test
-    include("wind2.jl")
+# @testset "sendParticlesToNeighbors SW W" begin
+#     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+#     using Test
+#     include("wind2.jl")
 
-    tunnel_rows = 10
-    tunnel_cols = 10
+#     tunnel_rows = 10
+#     tunnel_cols = 10
     
-    MPI.Init()
-    comm = MPI.Comm_dup(MPI.COMM_WORLD)
-    n_ranks = MPI.Comm_size(comm)
-    rank = MPI.Comm_rank(comm)
-    cart_dims = getCartDims(n_ranks)
-    periodic = map(_ -> false, cart_dims)
-    reorder = false
-    cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
-    cart_coord = MPI.Cart_coords(cart_comm)
-    cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+#     MPI.Init()
+#     comm = MPI.Comm_dup(MPI.COMM_WORLD)
+#     n_ranks = MPI.Comm_size(comm)
+#     rank = MPI.Comm_rank(comm)
+#     cart_dims = getCartDims(n_ranks)
+#     periodic = map(_ -> false, cart_dims)
+#     reorder = false
+#     cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+#     cart_coord = MPI.Cart_coords(cart_comm)
+#     cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
     
-    own_cols = tunnel_cols ÷ cart_dims[1]
-    own_rows = tunnel_rows ÷ cart_dims[2]
-    tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
-    tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
+#     own_cols = tunnel_cols ÷ cart_dims[1]
+#     own_rows = tunnel_rows ÷ cart_dims[2]
+#     tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
+#     tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
     
-    n_ps = (length(ARGS) - 15) ÷ 3
-    ips::Vector{Particle} = []
-    ops::Vector{Particle} = []
+#     n_ps = (length(ARGS) - 15) ÷ 3
+#     ips::Vector{Particle} = []
+#     ops::Vector{Particle} = []
 
-    src = 3
+#     src = 3
 
-    if rank == src
-        push!(ops, Particle([6, 5], 1, 2, [3, 4], 7)) # Send to 0, SW
-        push!(ops, Particle([5, 5], 1, 2, [3, 4], 7)) # Send to 1, W
+#     if rank == src
+#         push!(ops, Particle([6, 5], 1, 2, [3, 4], 7)) # Send to 0, SW
+#         push!(ops, Particle([5, 5], 1, 2, [3, 4], 7)) # Send to 1, W
         
-        sendParticlesToNeighbors(ops, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
-    end
+#         sendParticlesToNeighbors(ops, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
+#     end
 
-    MPI.Barrier(cart_comm)
+#     MPI.Barrier(cart_comm)
 
-    if rank == src
-        @test length(ops) == 0
-    elseif rank == 1
-        rb = Array{Int}(undef, 7)
-        rs = MPI.Irecv!(rb, cart_comm;source=src, tag=0)
-        MPI.Wait(rs)
+#     if rank == src
+#         @test length(ops) == 0
+#     elseif rank == 1
+#         rb = Array{Int}(undef, 7)
+#         rs = MPI.Irecv!(rb, cart_comm;source=src, tag=0)
+#         MPI.Wait(rs)
         
-        push!(ips, Particle([rb[1], rb[2]], rb[3], rb[4], [rb[5], rb[6]], rb[7]))
-        @test ips[1].position == [5, 5]
-    elseif rank == 0
-        rb = Array{Int}(undef, 7)
-        rs = MPI.Irecv!(rb, cart_comm;source=src, tag=0)
-        MPI.Wait(rs)
+#         push!(ips, Particle([rb[1], rb[2]], rb[3], rb[4], [rb[5], rb[6]], rb[7]))
+#         @test ips[1].position == [5, 5]
+#     elseif rank == 0
+#         rb = Array{Int}(undef, 7)
+#         rs = MPI.Irecv!(rb, cart_comm;source=src, tag=0)
+#         MPI.Wait(rs)
         
-        push!(ips, Particle([rb[1], rb[2]], rb[3], rb[4], [rb[5], rb[6]], rb[7]))
-        @test ips[1].position == [6, 5]
-    else
-        @test length(ips) == 0
-    end
+#         push!(ips, Particle([rb[1], rb[2]], rb[3], rb[4], [rb[5], rb[6]], rb[7]))
+#         @test ips[1].position == [6, 5]
+#     else
+#         @test length(ips) == 0
+#     end
 
-    '`))
-end
+#     '`))
+# end
 
-@testset "recvParticlesFromNeighbors" begin
-    mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
-    using Test
-    include("wind2.jl")
+# @testset "recvParticlesFromNeighbors" begin
+#     mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+#     using Test
+#     include("wind2.jl")
 
-    tunnel_rows = 10
-    tunnel_cols = 10
+#     tunnel_rows = 10
+#     tunnel_cols = 10
     
-    MPI.Init()
-    comm = MPI.Comm_dup(MPI.COMM_WORLD)
-    n_ranks = MPI.Comm_size(comm)
-    rank = MPI.Comm_rank(comm)
-    cart_dims = getCartDims(n_ranks)
-    periodic = map(_ -> false, cart_dims)
-    reorder = false
-    cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
-    cart_coord = MPI.Cart_coords(cart_comm)
-    cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+#     MPI.Init()
+#     comm = MPI.Comm_dup(MPI.COMM_WORLD)
+#     n_ranks = MPI.Comm_size(comm)
+#     rank = MPI.Comm_rank(comm)
+#     cart_dims = getCartDims(n_ranks)
+#     periodic = map(_ -> false, cart_dims)
+#     reorder = false
+#     cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+#     cart_coord = MPI.Cart_coords(cart_comm)
+#     cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
     
-    own_cols = tunnel_cols ÷ cart_dims[1]
-    own_rows = tunnel_rows ÷ cart_dims[2]
-    tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
-    tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
+#     own_cols = tunnel_cols ÷ cart_dims[1]
+#     own_rows = tunnel_rows ÷ cart_dims[2]
+#     tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
+#     tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
     
-    n_ps = (length(ARGS) - 15) ÷ 3
-    ips::Vector{Particle} = []
-    ops::Vector{Particle} = []
+#     n_ps = (length(ARGS) - 15) ÷ 3
+#     ips::Vector{Particle} = []
+#     ops::Vector{Particle} = []
 
-    if rank == 0
-        push!(ops, Particle([8, 6], 1, 2, [3, 4], 7)) # Send to 2
-    elseif rank == 1
-        push!(ops, Particle([6, 5], 1, 2, [3, 4], 7)) # Send to 0
-        push!(ops, Particle([7, 5], 1, 2, [3, 4], 7)) # Send to 0
-        push!(ops, Particle([2, 6], 1, 2, [3, 4], 7)) # Send to 3
-    elseif rank == 2
-        push!(ops, Particle([9, 5], 1, 2, [3, 4], 7)) # Send to 0
-    elseif rank == 3
-        push!(ops, Particle([3, 5], 1, 2, [3, 4], 7)) # Send to 1
-    end
+#     if rank == 0
+#         push!(ops, Particle([8, 6], 1, 2, [3, 4], 7)) # Send to 2
+#     elseif rank == 1
+#         push!(ops, Particle([6, 5], 1, 2, [3, 4], 7)) # Send to 0
+#         push!(ops, Particle([7, 5], 1, 2, [3, 4], 7)) # Send to 0
+#         push!(ops, Particle([2, 6], 1, 2, [3, 4], 7)) # Send to 3
+#     elseif rank == 2
+#         push!(ops, Particle([9, 5], 1, 2, [3, 4], 7)) # Send to 0
+#     elseif rank == 3
+#         push!(ops, Particle([3, 5], 1, 2, [3, 4], 7)) # Send to 1
+#     end
 
-    sendParticlesToNeighbors(ops, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
+#     sendParticlesToNeighbors(ops, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
+
+#     recvParticlesFromNeighbors(ips, cart_neighbors, cart_comm)
     
-    MPI.Barrier(cart_comm)
+#     @test length(ops) == 0
 
-    recvParticlesFromNeighbors(ips, cart_neighbors, cart_comm)
-    
-    @test length(ops) == 0
+#     if rank == 0; @test length(ips) == 3 end
+#     if rank == 1; @test length(ips) == 1 end
+#     if rank == 2; @test length(ips) == 1 end
+#     if rank == 3; @test length(ips) == 1 end
 
-    if rank == 0; println(" $rank : $(length(ips)) elements : $ips. ") end; MPI.Barrier(cart_comm)
-    if rank == 1; println(" $rank : $(length(ips)) elements : $ips. ") end; MPI.Barrier(cart_comm)
-    if rank == 2; println(" $rank : $(length(ips)) elements : $ips. ") end; MPI.Barrier(cart_comm)
-    if rank == 3; println(" $rank : $(length(ips)) elements : $ips. ") end; MPI.Barrier(cart_comm)
-    '`))
-end
+#     # if rank == 0; println(" $rank : $(length(ips)) elements : $ips. ") end; MPI.Barrier(cart_comm)
+#     # if rank == 1; println(" $rank : $(length(ips)) elements : $ips. ") end; MPI.Barrier(cart_comm)
+#     # if rank == 2; println(" $rank : $(length(ips)) elements : $ips. ") end; MPI.Barrier(cart_comm)
+#     # if rank == 3; println(" $rank : $(length(ips)) elements : $ips. ") end; MPI.Barrier(cart_comm)
+#     '`))
+# end
 
+# # TODO: Left here.
 @testset "particleMovements" begin
+    mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+    using Test
+    include("wind2.jl")
+
+    append!(ARGS, ["tr", "tc", "mi", "th", "fp", "fs", "fbp", "fbs", "fd", "mbp", "mbs", "md", "rs1", "rs2", "rs3", 
+    "2", "3", "0.5", "2", "3", "0.5", "2", "3", "0.5",
+    "3", "3", "0.5",
+    "2", "2", "0.5", "2", "2", "0.5", 
+    "2", "7", "0.5", "2", "7", "0.5", "2", "7", "0.5", "2", "7", "0.5",
+    "2", "8", "0.5", "2", "8", "0.5", "2", "8", "0.5", 
+    "2", "9", "0.5", "2", "9", "0.5", "2", "9", "0.5", "2", "9", "0.5", "2", "9", "0.5",])
+
+    tunnel_rows = 10
+    tunnel_cols = 10
+    fp = 1
+    fs = 10
     
+    MPI.Init()
+    comm = MPI.Comm_dup(MPI.COMM_WORLD)
+    n_ranks = MPI.Comm_size(comm)
+    rank = MPI.Comm_rank(comm)
+    cart_dims = getCartDims(n_ranks)
+    periodic = map(_ -> false, cart_dims)
+    reorder = false
+    cart_comm = MPI.Cart_create(comm, cart_dims; periodic, reorder)
+    cart_coord = MPI.Cart_coords(cart_comm)
+    cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
+    
+    rrr = rank
+
+    own_cols = tunnel_cols ÷ cart_dims[1]
+    own_rows = tunnel_rows ÷ cart_dims[2]
+    tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
+    tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
+    
+    n_ps = (length(ARGS) - 15) ÷ 3
+    ips::Vector{Particle} = []
+    ops::Vector{Particle} = []
+    readFixedParticles(1, n_ps, tsr, tsc, own_rows, own_cols, ips)
+    
+    flow = zeros(Int, own_rows + 2, own_cols + 2)
+    p_locs = zeros(Int, own_rows + 2, own_cols + 2)
+    
+    flow[1, :] = flow[end, :] .= -1; flow[:, 1] = flow[:, end] .= -1
+    p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
+
+
+    for iter in 1:32
+    
+        updateFan(iter, fp + 1, fs, flow, cart_dims, cart_coord, tunnel_cols, own_cols)
+    
+        particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, flow, ips, ops, cart_comm, cart_dims, cart_coord, cart_neighbors)        
+        
+    end
+
+    if rank == 1; println("$rank : flow"); display(flow) end; MPI.Barrier(cart_comm)
+    if rank == 0; println("$rank : flow"); display(flow) end; MPI.Barrier(cart_comm)
+    if rank == 3; println("$rank : flow"); display(flow) end; MPI.Barrier(cart_comm)
+    if rank == 2; println("$rank : flow"); display(flow) end; MPI.Barrier(cart_comm)
+    
+    if rank == 1; println("$rank : p_locs"); display(p_locs) end; MPI.Barrier(cart_comm)
+    if rank == 0; println("$rank : p_locs"); display(p_locs) end; MPI.Barrier(cart_comm)
+    if rank == 3; println("$rank : p_locs"); display(p_locs) end; MPI.Barrier(cart_comm)
+    if rank == 2; println("$rank : p_locs"); display(p_locs) end; MPI.Barrier(cart_comm)
+        
+    '`))
 end
