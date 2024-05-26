@@ -176,7 +176,9 @@ function recvFlowFromNeighbors(flow, cart_neighbors, cart_comm)
 end
 
 
-""""""
+"""Based on the flow, the function calculates the new position of a particle p.
+
+Returns 1 if p is outside the boundaries of the rank. Otherwise returns 0."""
 function moveParticle(flow, p, tsr, tsc, own_rows, own_cols, tunnel_rows, tunnel_cols, cart_comm, cart_neighbors)
     r = p.position[1] ÷ PRECISION
     c = p.position[2] ÷ PRECISION
@@ -389,13 +391,6 @@ function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols,
     cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, cart_coord)
     
     # Move particles. First send/recv the flow of neighbors, then move the particles.    
-    # if isodd(cart_coord[2])
-    #     sendFlowToNeighbors(flow, cart_neighbors, cart_comm)
-    #     recvFlowFromNeighbors(flow, cart_neighbors, cart_comm)
-    # else
-    #     recvFlowFromNeighbors(flow, cart_neighbors, cart_comm)
-    #     sendFlowToNeighbors(flow, cart_neighbors, cart_comm)
-    # end
     sendFlowToNeighbors(flow, cart_neighbors, cart_comm)
     recvFlowFromNeighbors(flow, cart_neighbors, cart_comm)
 
@@ -419,13 +414,6 @@ function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols,
         i += 1
     end
 
-    # if isodd(cart_coord[2])
-    #     sendParticlesToNeighbors(outgoing_particles, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
-    #     recvParticlesFromNeighbors(incoming_particles, cart_neighbors, cart_comm)
-    # else
-    #     recvParticlesFromNeighbors(incoming_particles, cart_neighbors, cart_comm)
-    #     sendParticlesToNeighbors(outgoing_particles, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
-    # end
     sendParticlesToNeighbors(outgoing_particles, cart_comm, cart_neighbors, tsr, tsc, own_rows, own_cols)
     recvParticlesFromNeighbors(incoming_particles, cart_neighbors, cart_comm)
     
