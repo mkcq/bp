@@ -560,6 +560,7 @@ function main()
         particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunnel_cols)
 
         # Copy data in ancillary structure.
+        copy!(flow_copy, flow)
 
         # Propagation stage.
     end
