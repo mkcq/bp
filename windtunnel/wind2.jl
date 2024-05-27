@@ -422,6 +422,68 @@ function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols,
 end
 
 
+""""""
+function updateFlow(flow, flow_copy, p_locs, r, c, tunnel_cols, skip_particles)
+    # Skip update in particle positions.
+    if (skip_particles && p_locs[r, c] != 0); return 0 end
+
+    # TODO: Take the ring of -1 around flow into account.
+
+    # Update if border left.
+    if c == 1
+        flow[r, c] = (flow_copy[r, c] + flow_copy[r - 1, c] * 2 + flow_copy[r - 1, c + 1]) ÷ 4
+    end
+
+    # Update if border right.
+    if c == tunnel_cols
+        flow[r, c] = (flow_copy[r, c] + flow_copy[r - 1, c] * 2 + flow_copy[r - 1, c - 1]) ÷ 4
+    end
+
+    # Update if central part.
+    if c > 1 && c < tunnel_cols
+        flow[r, c] = (flow_copy[r, c] + flow_copy[r - 1, c] * 2 + flow_copy[r - 1, c - 1] + flow_copy[r - 1, c + 1]) ÷ 5
+    end
+
+    # Return flow variation at this position.
+    return abs(flow_copy[r, c] - flow[r, c])
+end
+
+
+""""""
+function particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunnel_cols)
+    if !(iter % STEPS == 1); return end
+
+    np = length(incoming_particles)
+
+    # TODO: Take the ring of -1 around flow into account.
+    for p in 1:np
+        r = incoming_particles[p].position[1] ÷ PRECISION
+        c = incoming_particles[p].position[2] ÷ PRECISION
+        # Because flow is a (own_rows + 2) x (own_cols + 2) matrix.
+        fr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
+        fc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
+        updateFlow(flow, flow_copy, p_locs, fr, fc, tunnel_cols, false)
+        incoming_particles[p].old_flow = flow[fr, fc]
+    end
+    
+    # TODO: Take the ring of -1 around flow into account.
+    for p in 1:np
+        r = incoming_particles[p].position[1] ÷ PRECISION
+        c = incoming_particles[p].position[2] ÷ PRECISION
+        # Because flow is a (own_rows + 2) x (own_cols + 2) matrix.
+        fr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
+        fc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
+        resistance = incoming_particles[p].resistance
+        back = trunc(Int, (incoming_particles[p].old_flow * resistance ÷ PRECISION) ÷ p_locs[fr, fc])
+        flow[fr, fc] -= back
+        flow[fr - 1, fc] += back ÷ 2
+
+        fc > 0 ? (flow[fr - 1, fc - 1] += back ÷ 4) : (flow[fr - 1, fc] += back ÷ 4)
+        fc < (tunnel_cols - 1) ? (flow[fr - 1, fc + 1] += back ÷ 4) : (flow[fr - 1, fc] += back ÷ 4)
+    end
+end
+
+
 """For DAS the arguments are passed as parameters to main().
 For local execution the arguments are in the command line.
 
@@ -478,10 +540,12 @@ function main()
 
     # Initialization for parallelization.
     flow = zeros(Int, own_rows + 2, own_cols + 2)          # With ghostcell. Tunnel air flow.
+    flow_copy = zeros(Int, own_rows + 2, own_cols + 2)          # With ghostcell. Tunnel air flow.
     p_locs = zeros(Int, own_rows + 2, own_cols + 2)        # With ghostcell. Quickly locate particle positions.
     
     # Initialize ghostcells with value -1.
     flow[1, :] = flow[end, :] .= -1; flow[:, 1] = flow[:, end] .= -1
+    flow_copy[1, :] = flow_copy[end, :] .= -1; flow_copy[:, 1] = flow_copy[:, end] .= -1
     p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
 
     # Simulation
@@ -493,6 +557,7 @@ function main()
         particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, flow, incoming_particles, outgoing_particles, cart_comm, cart_dims, cart_coord, cart_neighbors)        
         
         # Effects due to particles each STEPS iterations.
+        particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunnel_cols)
 
         # Copy data in ancillary structure.
 

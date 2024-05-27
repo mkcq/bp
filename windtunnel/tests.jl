@@ -2,7 +2,6 @@ using Test
 using MPI
 using MPIClusterManagers
 using Distributed
-# include("wind.jl")
 include("wind2.jl")
 
 @testset "tunnelStartRow" begin
@@ -607,18 +606,21 @@ end
     readFixedParticles(1, n_ps, tsr, tsc, own_rows, own_cols, ips)
     
     flow = zeros(Int, own_rows + 2, own_cols + 2)
+    flow_copy = zeros(Int, own_rows + 2, own_cols + 2)
     p_locs = zeros(Int, own_rows + 2, own_cols + 2)
     
     flow[1, :] = flow[end, :] .= -1; flow[:, 1] = flow[:, end] .= -1
+    flow_copy[1, :] = flow_copy[end, :] .= -1; flow_copy[:, 1] = flow_copy[:, end] .= -1
     p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
 
 
-    for iter in 1:32
+    for iter in 1:1
     
         updateFan(iter, fp + 1, fs, flow, cart_dims, cart_coord, tunnel_cols, own_cols)
     
         particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, flow, ips, ops, cart_comm, cart_dims, cart_coord, cart_neighbors)        
         
+        # particleEffects(iter, ips, flow, flow_copy, p_locs, tunnel_cols)
     end
 
     if rank == 1; println("$rank : flow"); display(flow) end; MPI.Barrier(cart_comm)
@@ -630,6 +632,13 @@ end
     if rank == 0; println("$rank : p_locs"); display(p_locs) end; MPI.Barrier(cart_comm)
     if rank == 3; println("$rank : p_locs"); display(p_locs) end; MPI.Barrier(cart_comm)
     if rank == 2; println("$rank : p_locs"); display(p_locs) end; MPI.Barrier(cart_comm)
-        
     '`))
+end
+
+# TODO: updateFlow
+@testset "updateFlow" begin 
+end
+
+# TODO: particleEffects
+@testset "particleEffects" begin
 end
