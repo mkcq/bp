@@ -614,25 +614,45 @@ end
     p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
 
 
-    for iter in 1:1
+    for iter in 1:6
     
         updateFan(iter, fp + 1, fs, flow, cart_dims, cart_coord, tunnel_cols, own_cols)
     
         particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, flow, ips, ops, cart_comm, cart_dims, cart_coord, cart_neighbors)        
         
-        # particleEffects(iter, ips, flow, flow_copy, p_locs, tunnel_cols)
+        particleEffects(iter, ips, flow, flow_copy, p_locs, tunnel_cols)
+    
+        copy!(flow_copy, flow)
+
+        # propagateWaveFront(iter, tunnel_rows, tunnel_cols, flow, flow_copy, p_locs)
     end
 
-    if rank == 1; println("$rank : flow"); display(flow) end; MPI.Barrier(cart_comm)
-    if rank == 0; println("$rank : flow"); display(flow) end; MPI.Barrier(cart_comm)
-    if rank == 3; println("$rank : flow"); display(flow) end; MPI.Barrier(cart_comm)
-    if rank == 2; println("$rank : flow"); display(flow) end; MPI.Barrier(cart_comm)
-    
-    if rank == 1; println("$rank : p_locs"); display(p_locs) end; MPI.Barrier(cart_comm)
-    if rank == 0; println("$rank : p_locs"); display(p_locs) end; MPI.Barrier(cart_comm)
-    if rank == 3; println("$rank : p_locs"); display(p_locs) end; MPI.Barrier(cart_comm)
-    if rank == 2; println("$rank : p_locs"); display(p_locs) end; MPI.Barrier(cart_comm)
-    '`))
+    rcv_flow = MPI.Gather(flow, cart_comm;root=0)
+    rcv_p_locs = MPI.Gather(p_locs, cart_comm;root=0)
+
+    if rank == 0
+        range_rows = 2:own_rows + 1
+        range_cols = 2:own_cols + 1
+
+        res_flow = zeros(tunnel_rows + 2, tunnel_cols + 2)
+        res_flow[1,:] = res_flow[end,:] .= -1; res_flow[:,1] = res_flow[:,end] .= -1
+        inner_res_flow = view(res_flow, 2:tunnel_rows + 1, 2:tunnel_cols + 1)
+        partitioned = collect(Iterators.partition(rcv_flow, (own_rows + 2) * (own_cols + 2)))
+        matrices = [reshape(partitioned[i], own_rows + 2, own_cols + 2) for i in 1:n_ranks]
+        inner_res_flow .= combineMatrices(n_ranks, matrices, range_rows, range_cols)
+        println(" $rank : total flow. ")
+        display(res_flow)
+
+        res_p_locs = zeros(tunnel_rows + 2, tunnel_cols + 2)
+        res_p_locs[1,:] = res_p_locs[end,:] .= -1; res_p_locs[:,1] = res_p_locs[:,end] .= -1
+        inner_res_p_locs = view(res_p_locs, 2:tunnel_rows + 1, 2:tunnel_cols + 1)
+        partitioned = collect(Iterators.partition(rcv_p_locs, (own_rows + 2) * (own_cols + 2)))
+        matrices = [reshape(partitioned[i], own_rows + 2, own_cols + 2) for i in 1:n_ranks]
+        inner_res_p_locs .= combineMatrices(n_ranks, matrices, range_rows, range_cols)
+        println(" $rank : total p_locs. ")
+        display(res_p_locs)
+    end; MPI.Barrier(cart_comm)
+'`))
 end
 
 # TODO: updateFlow
@@ -641,4 +661,8 @@ end
 
 # TODO: particleEffects
 @testset "particleEffects" begin
+end
+
+# TODO: propagateWaveFront
+@testset "propagateWaveFront" begin
 end

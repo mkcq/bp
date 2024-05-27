@@ -16,6 +16,31 @@ mutable struct Particle
 end
 
 
+"""Given n_ranks ranks with the segments in matrices, the function returns a combined matrix.
+The values of n_ranks can be 1, 2, 4, 8, 16.
+The way in which the returned matrix is ordered depends on the value of getDims(n_ranks)."""
+function combineMatrices(n_ranks, matrices, range_rows, range_cols)
+    if n_ranks == 1
+        return [view(matrices[1], range_rows, range_cols)]
+    elseif n_ranks == 2
+        return [view(matrices[1], range_rows, range_cols) view(matrices[2], range_rows, range_cols)]
+    elseif n_ranks == 4
+        return [view(matrices[2], range_rows, range_cols) view(matrices[4], range_rows, range_cols)
+            ;view(matrices[1], range_rows, range_cols) view(matrices[3], range_rows, range_cols)]
+    elseif n_ranks == 8
+        return [view(matrices[4], range_rows, range_cols) view(matrices[8], range_rows, range_cols)
+        ;view(matrices[3], range_rows, range_cols) view(matrices[7], range_rows, range_cols)
+        ;view(matrices[2], range_rows, range_cols) view(matrices[6], range_rows, range_cols)
+        ;view(matrices[1], range_rows, range_cols) view(matrices[5], range_rows, range_cols)]
+    elseif n_ranks == 16
+        return [view(matrices[4], range_rows, range_cols) view(matrices[8], range_rows, range_cols) view(matrices[12], range_rows, range_cols) view(matrices[16], range_rows, range_cols)
+        ;view(matrices[3], range_rows, range_cols) view(matrices[7], range_rows, range_cols) view(matrices[11], range_rows, range_cols) view(matrices[15], range_rows, range_cols)
+        ;view(matrices[2], range_rows, range_cols) view(matrices[6], range_rows, range_cols) view(matrices[10], range_rows, range_cols) view(matrices[14], range_rows, range_cols)
+        ;view(matrices[1], range_rows, range_cols) view(matrices[5], range_rows, range_cols) view(matrices[9], range_rows, range_cols) view(matrices[13], range_rows, range_cols)]
+    end
+end
+
+
 """Given a size the function returns cartesian dimensions as [columns, rows].
 |0        |1        |
 |:--:     |:--:     |
@@ -484,6 +509,39 @@ function particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunn
 end
 
 
+""""""
+function propagateWaveFront(iter, tunnel_rows, tunnel_cols, flow, flow_copy, p_locs)
+
+    if iter % STEPS == 1
+        max_var = 0
+    end
+
+    wave_front = iter % STEPS
+
+    if wave_front == 0
+        wave_front = STEPS
+    end
+
+    wave = wave_front
+    while wave < tunnel_rows
+        
+        if wave > iter
+            continue
+        end
+
+        for c in 1:tunnel_cols
+            var = updateFlow(flow, flow_copy, p_locs, wave, c, tunnel_cols, true)
+            if var > max_var
+                max_var = var
+            end
+        end
+
+        wave += STEPS
+    end
+
+end
+
+
 """For DAS the arguments are passed as parameters to main().
 For local execution the arguments are in the command line.
 
@@ -563,6 +621,7 @@ function main()
         copy!(flow_copy, flow)
 
         # Propagation stage.
+        propagateWaveFront()
     end
 
     # TODO: Stop global timer.
