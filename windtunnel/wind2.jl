@@ -99,13 +99,43 @@ function readFixedParticles(lb, ub, tsr, tsc, own_rows, own_cols, particles)
         if !inCartGrid(tsr, tsc, r, c, own_rows, own_cols)
             continue
         end
-        # For fixed mass = 0.
-        # TODO: Turn mass back to 0.
-        mass = trunc(Int, PRECISION * (1 + 5  * rand(1)[1]))
+        mass = 0
         resistance = trunc(Int, parse(Float16, ARGS[15 + i * 3]) * PRECISION)
         speed = [0, 0]
         push!(particles, Particle([r, c] * PRECISION, mass, resistance, speed, 0))
     end
+end
+
+
+""""""
+function generateFixedParticlesBand(lb, ub, tsr, tsc, tunnel_cols, own_rows, own_cols, incoming_particles, fixed_band_pos, fixed_band_size)
+    for i in lb:ub
+        r = fixed_band_pos + fixed_band_size * rand(1)[1]
+        c = tunnel_cols * rand(1)[1]
+        if !inCartGrid(tsr, tsc, r, c, own_rows, own_cols)
+            continue
+        end
+        mass = 0
+        resistance = PRECISION * rand(1)[1]
+        speed = [0, 0]
+        push!(incoming_particles, Particle([r, c] * PRECISION, mass, resistance, speed, 0))
+    end
+end
+
+
+""""""
+function generateMovingParticlesBand(lb, ub, tsr, tsc, tunnel_cols, own_rows, own_cols, incoming_particles, moving_band_pos, moving_band_size)
+    for i in lb:ub
+        r = moving_band_pos + moving_band_size * rand(1)[1]
+        c = tunnel_cols * rand(1)[1]
+        if !inCartGrid(tsr, tsc, r, c, own_rows, own_cols)
+            continue
+        end
+        mass = PRECISION * (1 + 5 * rand(1)[1])
+        resistance = PRECISION * rand(1)[1]
+        speed = [0, 0]
+        push!(incoming_particles, Particle([r, c] * PRECISION, mass, resistance, speed, 0))
+    end    
 end
 
 
@@ -592,16 +622,22 @@ function main()
 
     # Read particles form the arugments and only add them if the are within own cartesian grid cell.
     n_particles = (length(ARGS) - 15) ÷ 3
+    n_p_f_b = fixed_band_size * tunnel_cols * fixed_density
+    n_p_m_b = moving_band_size * tunnel_cols * moving_density
     incoming_particles::Vector{Particle} = []
     outgoing_particles::Vector{Particle} = []
 
     tsr = tunnelStartRow(tunnel_rows, cart_dims, cart_coord)
     tsc = tunnelStartColumn(tunnel_cols, cart_dims, cart_coord)
     readFixedParticles(1, n_particles, tsr, tsc, own_rows, own_cols, incoming_particles)
+    
+    generateFixedParticlesBand(1, n_p_f_b, tsr, tsc, tunnel_cols, own_rows, own_cols, incoming_particles, fixed_band_pos, fixed_band_size)
+    
+    generateMovingParticlesBand(1, n_p_m_b, tsr, tsc, tunnel_cols, own_rows, own_cols, incoming_particles, moving_band_pos, moving_band_size)
 
     # Initialization for parallelization.
     flow = zeros(Int, own_rows + 2, own_cols + 2)          # With ghostcell. Tunnel air flow.
-    flow_copy = zeros(Int, own_rows + 2, own_cols + 2)          # With ghostcell. Tunnel air flow.
+    flow_copy = zeros(Int, own_rows + 2, own_cols + 2)     # With ghostcell. Copy of tunnel air flow.
     p_locs = zeros(Int, own_rows + 2, own_cols + 2)        # With ghostcell. Quickly locate particle positions.
     
     # Initialize ghostcells with value -1.
@@ -612,7 +648,8 @@ function main()
     max_var = typemax(Int64)
 
     # Simulation
-    for iter in 1:max_iter
+    start_iter = 0
+    for iter in start_iter:max_iter
         
         if max_var <= threshold
             break
@@ -632,6 +669,8 @@ function main()
 
         # Propagation stage.
         propagateWaveFront(iter, tunnel_rows, tunnel_cols, tsr, tsc, own_rows, own_cols, flow, flow_copy, p_locs)
+    
+        if rank == 0; println(" $iter ") end;MPI.Barrier(cart_comm)
     end
 
     # TODO: Stop global timer.
@@ -641,4 +680,4 @@ function main()
 end
 
 # Comment out call to main() whenever running tests.jl.
-# main()
+main()
