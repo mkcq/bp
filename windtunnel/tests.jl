@@ -565,7 +565,8 @@ end
 end
 
 @testset "particleMovements" begin
-    mpiexec(cmd->run(`$cmd -np 4 julia --project=. -e '
+    MACHINES = 4
+    mpiexec(cmd->run(`$cmd -np $MACHINES julia --project=. -e '
     using Test
     include("wind2.jl")
 
@@ -613,14 +614,16 @@ end
     flow_copy[1, :] = flow_copy[end, :] .= -1; flow_copy[:, 1] = flow_copy[:, end] .= -1
     p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
 
+    max_var = typemax(Int64)
+    maxiter = 80
 
-    for iter in 1:6
+    for iter in 1:maxiter
     
         updateFan(iter, fp + 1, fs, flow, cart_dims, cart_coord, tunnel_cols, own_cols)
     
         particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, flow, ips, ops, cart_comm, cart_dims, cart_coord, cart_neighbors)        
         
-        particleEffects(iter, ips, flow, flow_copy, p_locs, tunnel_cols)
+        # particleEffects(iter, ips, flow, flow_copy, p_locs, tunnel_cols)
     
         copy!(flow_copy, flow)
 
@@ -634,7 +637,7 @@ end
         range_rows = 2:own_rows + 1
         range_cols = 2:own_cols + 1
 
-        res_flow = zeros(tunnel_rows + 2, tunnel_cols + 2)
+        res_flow = zeros(Int, tunnel_rows + 2, tunnel_cols + 2)
         res_flow[1,:] = res_flow[end,:] .= -1; res_flow[:,1] = res_flow[:,end] .= -1
         inner_res_flow = view(res_flow, 2:tunnel_rows + 1, 2:tunnel_cols + 1)
         partitioned = collect(Iterators.partition(rcv_flow, (own_rows + 2) * (own_cols + 2)))
@@ -643,7 +646,7 @@ end
         println(" $rank : total flow. ")
         display(res_flow)
 
-        res_p_locs = zeros(tunnel_rows + 2, tunnel_cols + 2)
+        res_p_locs = zeros(Int, tunnel_rows + 2, tunnel_cols + 2)
         res_p_locs[1,:] = res_p_locs[end,:] .= -1; res_p_locs[:,1] = res_p_locs[:,end] .= -1
         inner_res_p_locs = view(res_p_locs, 2:tunnel_rows + 1, 2:tunnel_cols + 1)
         partitioned = collect(Iterators.partition(rcv_p_locs, (own_rows + 2) * (own_cols + 2)))
@@ -651,18 +654,58 @@ end
         inner_res_p_locs .= combineMatrices(n_ranks, matrices, range_rows, range_cols)
         println(" $rank : total p_locs. ")
         display(res_p_locs)
+
+        # printStatus(rank, maxiter, max_var, view(res_flow, 2:tunnel_rows + 1, 2:tunnel_cols + 1), tunnel_rows, tunnel_cols)
+
     end; MPI.Barrier(cart_comm)
-'`))
+
+    '`))
 end
 
-# TODO: updateFlow
-@testset "updateFlow" begin 
-end
+# # TODO: updateFlow
+# @testset "updateFlow 2 x 2" begin
+#     tunnel_rows = 10
+#     tunnel_cols = 10
+#     fp = 1
+#     fs = 10
+#     maxiter = 8
 
-# TODO: particleEffects
-@testset "particleEffects" begin
-end
+#     cart_dims = [2, 2]
+#     cart_coord = [[0, 0], [0, 1], [1, 0], [1, 1]]
+#     own_cols = tunnel_cols ÷ cart_dims[1]
+#     own_rows = tunnel_rows ÷ cart_dims[2]
+    
+#     flow0 = zeros(Int, own_rows + 2, own_cols + 2); flow0[1, :] = flow0[end, :] .= -1; flow0[:, 1] = flow0[:, end] .= -1; flow_copy0 = copy(flow0); plocs0 = copy(flow0)
+#     flow1 = copy(flow0); flow_copy1 = copy(flow0); plocs1 = copy(flow0)
+#     flow2 = copy(flow0); flow_copy2 = copy(flow0); plocs2 = copy(flow0)
+#     flow3 = copy(flow0); flow_copy3 = copy(flow0); plocs3 = copy(flow0)
 
-# TODO: propagateWaveFront
-@testset "propagateWaveFront" begin
-end
+#     ips1::Vector{Particle} = []
+#     push!(ips1, Particle([2, 4]*PRECISION, 1, 1, [1, 1], 1))
+#     AnnotateParticleLocation(ips1, own_rows, own_cols, plocs1)
+
+#     for iter in 1:maxiter
+#         updateFan(iter, fp + 1, fs, flow0, cart_dims, cart_coord[1], tunnel_cols, own_cols)
+#         updateFan(iter, fp + 1, fs, flow1, cart_dims, cart_coord[2], tunnel_cols, own_cols)
+#         updateFan(iter, fp + 1, fs, flow2, cart_dims, cart_coord[3], tunnel_cols, own_cols)
+#         updateFan(iter, fp + 1, fs, flow3, cart_dims, cart_coord[4], tunnel_cols, own_cols)
+#         particleEffects(iter, ips1, flow1, flow_copy1, plocs1, tunnel_cols, own_rows, own_cols)
+#     end
+
+
+#     t = hcat(view(flow1, 2:own_rows + 1, 2:own_cols + 1), view(flow3, 2:own_rows + 1, 2:own_cols + 1))
+#     b = hcat(view(flow0, 2:own_rows + 1, 2:own_cols + 1), view(flow2, 2:own_rows + 1, 2:own_cols + 1))
+#     display(vcat(t, b))
+
+#     t = hcat(view(plocs1, 2:own_rows + 1, 2:own_cols + 1), view(plocs3, 2:own_rows + 1, 2:own_cols + 1))
+#     b = hcat(view(plocs0, 2:own_rows + 1, 2:own_cols + 1), view(plocs2, 2:own_rows + 1, 2:own_cols + 1))
+#     display(vcat(t, b))
+# end
+
+# # TODO: particleEffects
+# @testset "particleEffects" begin
+# end
+
+# # TODO: propagateWaveFront
+# @testset "propagateWaveFront" begin
+# end

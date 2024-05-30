@@ -448,97 +448,100 @@ end
 
 
 """"""
-function updateFlow(flow, flow_copy, p_locs, r, c, tunnel_cols, skip_particles)
+function updateFlow(flow, flow_copy, p_locs, r, c, fr, fc, tunnel_cols, skip_particles)
     # Skip update in particle positions.
     if (skip_particles && p_locs[r, c] != 0); return 0 end
 
-    # TODO: Take the ring of -1 around flow into account.
-
     # Update if border left.
     if c == 1
-        flow[r, c] = (flow_copy[r, c] + flow_copy[r - 1, c] * 2 + flow_copy[r - 1, c + 1]) ÷ 4
+        flow[fr, fc] = (flow_copy[fr, fc] + flow_copy[fr - 1, fc] * 2 + flow_copy[fr - 1, fc + 1]) ÷ 4
     end
 
     # Update if border right.
     if c == tunnel_cols
-        flow[r, c] = (flow_copy[r, c] + flow_copy[r - 1, c] * 2 + flow_copy[r - 1, c - 1]) ÷ 4
+        flow[fr, fc] = (flow_copy[fr, fc] + flow_copy[fr - 1, fc] * 2 + flow_copy[fr - 1, fc - 1]) ÷ 4
     end
 
     # Update if central part.
     if c > 1 && c < tunnel_cols
-        flow[r, c] = (flow_copy[r, c] + flow_copy[r - 1, c] * 2 + flow_copy[r - 1, c - 1] + flow_copy[r - 1, c + 1]) ÷ 5
+        flow[fr, fc] = (flow_copy[fr, fc] + flow_copy[fr - 1, fc] * 2 + flow_copy[fr - 1, fc - 1] + flow_copy[fr - 1, fc + 1]) ÷ 5
     end
 
     # Return flow variation at this position.
-    return abs(flow_copy[r, c] - flow[r, c])
+    return abs(flow_copy[fr, fc] - flow[fr, fc])
 end
 
 
 """"""
-function particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunnel_cols)
+function particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunnel_cols, own_rows, own_cols)
     if !(iter % STEPS == 1); return end
 
-    np = length(incoming_particles)
-
-    # TODO: Take the ring of -1 around flow into account.
-    for p in 1:np
-        r = incoming_particles[p].position[1] ÷ PRECISION
-        c = incoming_particles[p].position[2] ÷ PRECISION
+    for p in incoming_particles
+        r = p.position[1] ÷ PRECISION
+        c = p.position[2] ÷ PRECISION
         # Because flow is a (own_rows + 2) x (own_cols + 2) matrix.
         fr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
         fc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
-        updateFlow(flow, flow_copy, p_locs, fr, fc, tunnel_cols, false)
-        incoming_particles[p].old_flow = flow[fr, fc]
+        updateFlow(flow, flow_copy, p_locs, r, c, fr, fc, tunnel_cols, false)
+        p.old_flow = flow[fr, fc]
     end
     
-    # TODO: Take the ring of -1 around flow into account.
-    for p in 1:np
-        r = incoming_particles[p].position[1] ÷ PRECISION
-        c = incoming_particles[p].position[2] ÷ PRECISION
+    for p in incoming_particles
+        r = p.position[1] ÷ PRECISION
+        c = p.position[2] ÷ PRECISION
         # Because flow is a (own_rows + 2) x (own_cols + 2) matrix.
         fr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
         fc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
-        resistance = incoming_particles[p].resistance
-        back = trunc(Int, (incoming_particles[p].old_flow * resistance ÷ PRECISION) ÷ p_locs[fr, fc])
+        back = trunc(Int, (p.old_flow * p.resistance ÷ PRECISION) ÷ p_locs[fr, fc])
         flow[fr, fc] -= back
         flow[fr - 1, fc] += back ÷ 2
 
-        fc > 0 ? (flow[fr - 1, fc - 1] += back ÷ 4) : (flow[fr - 1, fc] += back ÷ 4)
-        fc < (tunnel_cols - 1) ? (flow[fr - 1, fc + 1] += back ÷ 4) : (flow[fr - 1, fc] += back ÷ 4)
+        c > 1 ? (flow[fr - 1, fc - 1] += back ÷ 4) : (flow[fr - 1, fc] += back ÷ 4)
+
+        c < tunnel_cols ? (flow[fr - 1, fc + 1] += back ÷ 4) : (flow[fr - 1, fc] += back ÷ 4)
     end
 end
 
 
 """"""
-function propagateWaveFront(iter, tunnel_rows, tunnel_cols, flow, flow_copy, p_locs)
-
-    if iter % STEPS == 1
-        max_var = 0
-    end
+function propagateWaveFront(iter, tunnel_rows, tunnel_cols, tsr, tsc, own_rows, own_cols, flow, flow_copy, p_locs)
 
     wave_front = iter % STEPS
+
+    if wave_front == 1
+        max_var = 0
+    end
 
     if wave_front == 0
         wave_front = STEPS
     end
 
     wave = wave_front
-    while wave < tunnel_rows
-        
-        if wave > iter
-            continue
+    own_wave_fronts::Vector{Int} = []
+    for wave in 1:tunnel_rows
+        if inCartGrid(tsr, tsc, wave, tsc, own_rows, own_cols)
+            push!(own_wave_fronts, wave)
         end
-
-        for c in 1:tunnel_cols
-            var = updateFlow(flow, flow_copy, p_locs, wave, c, tunnel_cols, true)
-            if var > max_var
-                max_var = var
-            end
-        end
-
-        wave += STEPS
     end
 
+    for wave in own_wave_fronts
+
+        if wave > iter
+            break
+        end
+        
+        for c in 1:tunnel_cols
+            if inCartGrid(tsr, tsc, wave, c, own_rows, own_cols)
+                # Because flow is a (own_rows + 2) x (own_cols + 2) matrix.
+                fr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
+                fc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
+                var = updateFlow(flow, flow_copy, p_locs, wave, c, fr, fc, tunnel_cols, true)
+                if var > max_var
+                    max_var = var
+                end
+            end
+        end
+    end
 end
 
 
@@ -606,8 +609,15 @@ function main()
     flow_copy[1, :] = flow_copy[end, :] .= -1; flow_copy[:, 1] = flow_copy[:, end] .= -1
     p_locs[1, :] = p_locs[end, :] .= -1; p_locs[:, 1] = p_locs[:, end] .= -1
 
+    max_var = typemax(Int64)
+
     # Simulation
     for iter in 1:max_iter
+        
+        if max_var <= threshold
+            break
+        end
+
         # Change the fan values each STEP iterations.
         updateFan(iter, fan_pos + 1, fan_size, flow, cart_dims, cart_coord, tunnel_cols, own_cols)    
         
@@ -615,13 +625,13 @@ function main()
         particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, flow, incoming_particles, outgoing_particles, cart_comm, cart_dims, cart_coord, cart_neighbors)        
         
         # Effects due to particles each STEPS iterations.
-        particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunnel_cols)
+        particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunnel_cols, own_rows, own_cols)
 
         # Copy data in ancillary structure.
         copy!(flow_copy, flow)
 
         # Propagation stage.
-        propagateWaveFront()
+        propagateWaveFront(iter, tunnel_rows, tunnel_cols, tsr, tsc, own_rows, own_cols, flow, flow_copy, p_locs)
     end
 
     # TODO: Stop global timer.
