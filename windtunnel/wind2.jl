@@ -5,6 +5,7 @@ PRECISION = 10000
 STEPS = 8
 
 global rrr = 0
+global cc = 0
 
 """Position as [tunnel_row, tunnel_column] and speed as [row, column]."""
 mutable struct Particle
@@ -134,7 +135,7 @@ function generateMovingParticlesBand(lb, ub, tsr, tsc, tunnel_cols, own_rows, ow
         mass = PRECISION * (1 + 5 * rand(1)[1])
         resistance = PRECISION * rand(1)[1]
         speed = [0, 0]
-        push!(incoming_particles, Particle([r, c] * PRECISION, mass, resistance, speed, 0))
+        # push!(incoming_particles, Particle([r, c] * PRECISION, mass, resistance, speed, 0))
     end    
 end
 
@@ -182,7 +183,7 @@ end
 
 
 """Function does a non-blocking send to distribute the flow to below. The directions are: S, SW, SE, W and E."""
-function sendFlowToNeighbors(flow, cart_neighbors, cart_comm)
+function sendFlowToNeighbors(flow, own_rows, own_cols, cart_neighbors, cart_comm)
     reqs = MPI.Request[]
     for (k, v) in cart_neighbors
         if k == "S" && v >= 0
@@ -207,7 +208,7 @@ end
 
 
 """Function does a non-blocking receive to gather the flow from above. The directions are: N, NW, NE, W and E."""
-function recvFlowFromNeighbors(flow, cart_neighbors, cart_comm)
+function recvFlowFromNeighbors(flow, own_rows, own_cols, cart_neighbors, cart_comm)
     reqs = MPI.Request[]
     for (k, v) in cart_neighbors
         if k == "N" && v >= 0
@@ -400,7 +401,7 @@ end
 
 
 """Sets the values of p_locs to 0 when either iter <= tunnel_rows or on all tunnel_rows."""
-function cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, cart_coord)
+function cleanParticleLocations(p_locs, tunnel_rows, own_rows, own_cols, iter, cart_dims, cart_coord)
     if iter <= tunnel_rows        
         ub = min(iter - own_rows * (cart_dims[2] - 1 - cart_coord[2]), own_rows) + 1
         for i in 2:ub , j in 2:own_cols + 1
@@ -436,18 +437,18 @@ The outline of this function:
 5. If even first receive then send.
 6. Annotate particle locations.
 """
-function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, 
+function particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, own_rows, own_cols,
     p_locs, flow,
     incoming_particles, outgoing_particles, 
     cart_comm, cart_dims, cart_coord, cart_neighbors)
     if !(iter % STEPS == 1); return end
 
     # Clean particle locations in rank.
-    cleanParticleLocations(p_locs, own_rows, own_cols, iter, cart_dims, cart_coord)
+    cleanParticleLocations(p_locs, tunnel_rows, own_rows, own_cols, iter, cart_dims, cart_coord)
     
     # Move particles. First send/recv the flow of neighbors, then move the particles.    
-    sendFlowToNeighbors(flow, cart_neighbors, cart_comm)
-    recvFlowFromNeighbors(flow, cart_neighbors, cart_comm)
+    sendFlowToNeighbors(flow, own_rows, own_cols, cart_neighbors, cart_comm)
+    recvFlowFromNeighbors(flow, own_rows, own_cols, cart_neighbors, cart_comm)
 
     i = 1
     del = 0
@@ -478,9 +479,11 @@ end
 
 
 """"""
-function updateFlow(flow, flow_copy, p_locs, r, c, fr, fc, tunnel_cols, skip_particles)
+function updateFlow(cart_comm, flow, flow_copy, p_locs, r, c, fr, fc, tunnel_cols, skip_particles)
+    if rrr == 0; println(" updateFlow-START") end; MPI.Barrier(cart_comm)
+    
     # Skip update in particle positions.
-    if (skip_particles && p_locs[r, c] != 0); return 0 end
+    if (skip_particles && p_locs[fr, fc] != 0); return 0 end
 
     # Update if border left.
     if c == 1
@@ -497,13 +500,17 @@ function updateFlow(flow, flow_copy, p_locs, r, c, fr, fc, tunnel_cols, skip_par
         flow[fr, fc] = (flow_copy[fr, fc] + flow_copy[fr - 1, fc] * 2 + flow_copy[fr - 1, fc - 1] + flow_copy[fr - 1, fc + 1]) ÷ 5
     end
 
+    if rrr == 0; println(" updateFlow-END") end; MPI.Barrier(cart_comm)
+
     # Return flow variation at this position.
     return abs(flow_copy[fr, fc] - flow[fr, fc])
 end
 
 
 """"""
-function particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunnel_cols, own_rows, own_cols)
+function particleEffects(cart_comm, iter, incoming_particles, flow, flow_copy, p_locs, tunnel_cols, own_rows, own_cols)
+    if rrr == 0; println(" particleEffects-START") end; MPI.Barrier(cart_comm)
+
     if !(iter % STEPS == 1); return end
 
     for p in incoming_particles
@@ -512,7 +519,8 @@ function particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunn
         # Because flow is a (own_rows + 2) x (own_cols + 2) matrix.
         fr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
         fc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
-        updateFlow(flow, flow_copy, p_locs, r, c, fr, fc, tunnel_cols, false)
+        if rrr == 0; println(" r, c, fr, fc = $r $c $fr $fc ") end; MPI.Barrier(cart_comm)
+        updateFlow(cart_comm, flow, flow_copy, p_locs, r, c, fr, fc, tunnel_cols, false)
         p.old_flow = flow[fr, fc]
     end
     
@@ -530,11 +538,14 @@ function particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunn
 
         c < tunnel_cols ? (flow[fr - 1, fc + 1] += back ÷ 4) : (flow[fr - 1, fc] += back ÷ 4)
     end
+
+    if rrr == 0; println(" particleEffects-END") end; MPI.Barrier(cart_comm)
 end
 
 
 """"""
-function propagateWaveFront(iter, tunnel_rows, tunnel_cols, tsr, tsc, own_rows, own_cols, flow, flow_copy, p_locs)
+function propagateWaveFront(cart_comm, iter, tunnel_rows, tunnel_cols, tsr, tsc, own_rows, own_cols, flow, flow_copy, p_locs)
+    if rrr == 0; println(" propagateWaveFront-START") end; MPI.Barrier(cart_comm)
 
     wave_front = iter % STEPS
 
@@ -563,15 +574,17 @@ function propagateWaveFront(iter, tunnel_rows, tunnel_cols, tsr, tsc, own_rows, 
         for c in 1:tunnel_cols
             if inCartGrid(tsr, tsc, wave, c, own_rows, own_cols)
                 # Because flow is a (own_rows + 2) x (own_cols + 2) matrix.
-                fr = r % own_rows == 0 ? own_rows + 1 : r % own_rows + 1
+                fr = wave % own_rows == 0 ? own_rows + 1 : wave % own_rows + 1
                 fc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
-                var = updateFlow(flow, flow_copy, p_locs, wave, c, fr, fc, tunnel_cols, true)
+                var = updateFlow(cart_comm, flow, flow_copy, p_locs, wave, c, fr, fc, tunnel_cols, true)
                 if var > max_var
                     max_var = var
                 end
             end
         end
     end
+
+    if rrr == 0; println(" propagateWaveFront-END ") end; MPI.Barrier(cart_comm)
 end
 
 
@@ -616,6 +629,8 @@ function main()
     cart_coord = MPI.Cart_coords(cart_comm)
     cart_neighbors = getNeighborRanks(cart_dims, cart_coord, cart_comm)
 
+    rrr = rank
+
     # Initialize own rows and cols.
     own_cols = tunnel_cols ÷ cart_dims[1]
     own_rows = tunnel_rows ÷ cart_dims[2]
@@ -651,6 +666,8 @@ function main()
     start_iter = 0
     for iter in start_iter:max_iter
         
+        if rrr == 0; println(" iter = $iter ") end;MPI.Barrier(cart_comm)
+
         if max_var <= threshold
             break
         end
@@ -659,18 +676,16 @@ function main()
         updateFan(iter, fan_pos + 1, fan_size, flow, cart_dims, cart_coord, tunnel_cols, own_cols)    
         
         # Particles movement each STEPS iterations.
-        particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, p_locs, flow, incoming_particles, outgoing_particles, cart_comm, cart_dims, cart_coord, cart_neighbors)        
+        particleMovements(iter, tsr, tsc, tunnel_rows, tunnel_cols, own_rows, own_cols, p_locs, flow, incoming_particles, outgoing_particles, cart_comm, cart_dims, cart_coord, cart_neighbors)        
         
         # Effects due to particles each STEPS iterations.
-        particleEffects(iter, incoming_particles, flow, flow_copy, p_locs, tunnel_cols, own_rows, own_cols)
+        particleEffects(cart_comm, iter, incoming_particles, flow, flow_copy, p_locs, tunnel_cols, own_rows, own_cols)
 
         # Copy data in ancillary structure.
         copy!(flow_copy, flow)
 
         # Propagation stage.
-        propagateWaveFront(iter, tunnel_rows, tunnel_cols, tsr, tsc, own_rows, own_cols, flow, flow_copy, p_locs)
-    
-        if rank == 0; println(" $iter ") end;MPI.Barrier(cart_comm)
+        propagateWaveFront(cart_comm, iter, tunnel_rows, tunnel_cols, tsr, tsc, own_rows, own_cols, flow, flow_copy, p_locs)
     end
 
     # TODO: Stop global timer.
