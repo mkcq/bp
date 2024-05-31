@@ -276,7 +276,15 @@ function print_status(tr, tc, flow, pl)
 
     display(result)
 
-    # write("restult.txt", result)
+    res = ""
+    for r in 1:tr
+        for c in 1:tc
+            length(result[r, c]) > 1 ? res *= " $(result[r,c]) " : res *= "  $(result[r,c])  "
+        end
+        res *= "\n"
+    end
+
+    write("restult.txt", res)
 
     # println(" print_status exit. ")
 end
