@@ -204,37 +204,37 @@ end
 
 
 function p_wavefront(iter, max_var, tr, tc, flow, flow_copy, p_locs)
-    # println(" p_wavefront start.")
     wavefront = iter % STEPS
     if wavefront == 1
         max_var = 0
     elseif wavefront == 0
         wavefront = STEPS
     end
-
+    wf = 0
     wave = wavefront
     while wave < tr
-        # println("   wave = $wave ")
         if wave > iter
             break
         end
 
         for c in 1:tc
             var = update_flow(flow, flow_copy, p_locs, wave, c, tc, true)
-            if var > max_var
-                max_var = var
-            end
+            if var > max_var; max_var = var end
+            wf += 1
         end
 
         wave += STEPS
     end
-    # println(" p_wavefront exit.")
+    # println(" -> p_wavefront at iter = ", iter)
+    return wf
 end
 
 
 function simulate_windtunnel(start_iter, max_iter, max_var, threshold, fan_pos, fan_size, tr, tc, flow, flow_copy, p_locs, particles)
     # println("START simulation.")
-    for iter in start_iter:max_iter
+    ti = 0
+    wf = 0
+    @time for iter in start_iter:max_iter
         # println(" iter = $iter ")
         if max_var <= threshold
             break
@@ -248,8 +248,11 @@ function simulate_windtunnel(start_iter, max_iter, max_var, threshold, fan_pos, 
 
         copy!(flow_copy, flow)
 
-        p_wavefront(iter, max_var, tr, tc, flow, flow_copy, p_locs)
+        wf += p_wavefront(iter, max_var, tr, tc, flow, flow_copy, p_locs)
+
+        ti += 1
     end
+    println(" -> total iterations = ", ti, " and wf = ", wf)
     # println("EXIT simulation.")
 end
 
@@ -274,7 +277,7 @@ function print_status(tr, tc, flow, pl)
         pl[r, c] > 0 ? result[r, c] = "[$symbol]" : result[r, c] = string(symbol)
     end
 
-    display(result)
+    # display(result)
 
     res = ""
     for r in 1:tr
@@ -333,8 +336,8 @@ function main()
     p_locs = copy(flow)
 
     start_iter = 0
-    @time simulate_windtunnel(start_iter, max_iter, max_var, threshold, fan_pos, fan_size, tunnel_rows, tunnel_cols, flow, flow_copy, p_locs, particles)
-
+    simulate_windtunnel(start_iter, max_iter, max_var, threshold, fan_pos, fan_size, tunnel_rows, tunnel_cols, flow, flow_copy, p_locs, particles)
+    
     print_status(tunnel_rows, tunnel_cols, flow, p_locs)
 end
 

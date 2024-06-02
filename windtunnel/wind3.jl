@@ -1,9 +1,10 @@
 using MPI
 using Random
+using BenchmarkTools
 
 
-PRECISION = 10000
-STEPS = 8
+const PRECISION::Int = 10000
+const STEPS::Int = 8
 TSR = 0
 TSC = 0
 
@@ -209,7 +210,7 @@ function recv_flow(comm, neighbors, flow, own_rows, own_cols)
 end
 
 
-""""""
+"""Updates the position and speed of a particle p."""
 function p_move(flow, p, tr, tc, own_rows, own_cols)
     for step in 0:STEPS
         
@@ -248,7 +249,7 @@ function p_move(flow, p, tr, tc, own_rows, own_cols)
 end
 
 
-""""""
+"""Sends a list of particles or a dummy value to all neighbors (S, E, W, SE, SW). After sending the particles it deletes all entries of the list particles."""
 function p_send(comm, neighbors, particles, own_rows, own_cols)
     reqs = MPI.Request[]
     send_SE::Vector{Int} = []
@@ -310,7 +311,7 @@ function p_send(comm, neighbors, particles, own_rows, own_cols)
 end
 
 
-""""""
+"""Receives from a source src and appends total_recv if the length of the message is larger than 1 (dummy value)."""
 function p_recv_neighbor(comm, src, total_recv)
     status = MPI.Probe(comm, MPI.Status;source=src, tag=0)
     num = MPI.Get_count(status, Int)
@@ -322,7 +323,7 @@ function p_recv_neighbor(comm, src, total_recv)
 end
 
 
-""""""
+"""Receives particles from all neihgbors (N, E, W, NE, NW) and pushes the received particles into particles."""
 function p_recv(comm, neihgbors, particles)
     total_recv::Vector{Int} = []
 
@@ -348,7 +349,7 @@ function p_recv(comm, neihgbors, particles)
 end
 
 
-""""""
+"""First cleans p_locs, then updates the flow. The new values of flow are used for p_move. Sends to and receives from all relevant neighbors. Finally updates the p_locs."""
 function p_movements(iter, comm, dims, coord, neighbors, tr, tc, own_rows, own_cols, flow, p_locs, incoming_particles, outgoing_particles)
     if iter % STEPS != 1; return end
 
@@ -356,7 +357,7 @@ function p_movements(iter, comm, dims, coord, neighbors, tr, tc, own_rows, own_c
 
     send_flow(comm, neighbors, flow, own_rows, own_cols)
     recv_flow(comm, neighbors, flow, own_rows, own_cols)
-
+    
     i = 1
     del = 0
     while i <= length(incoming_particles)
@@ -382,7 +383,7 @@ function p_movements(iter, comm, dims, coord, neighbors, tr, tc, own_rows, own_c
 end
 
 
-""""""
+"""Updates the flow """
 function update_flow(flow, flow_copy, p_locs, r, c, fr, fc, tc, skip)
     if skip && p_locs[fr, fc] != 0 || r == 1; return 0 end
 
@@ -433,32 +434,31 @@ end
 
 
 """"""
-function p_wavefront(iter, max_var, tr, tc, own_rows, own_cols, flow, flow_copy, p_locs)
+function p_wavefront(rank, iter, max_var, tr, tc, own_rows, own_cols, flow, flow_copy, p_locs)
     wavefront = iter % STEPS
-    
     if wavefront == 1
         max_var = 0
     elseif wavefront == 0
         wavefront = STEPS
     end
-
-    own_wavefronts::Vector{Int} = []
-    for w in wavefront:tr
-        if in_cartesian_segment(w, TSC, own_rows, own_cols)
-            push!(own_wavefronts, w)
+    wf = 0
+    wave = wavefront
+    while wave < tr
+        if wave > iter
+            break
         end
-    end
 
-    for w in own_wavefronts
-        if w > iter; break end
-
-        for c in TSC:TSC + own_cols - 1
-            fr = w % own_rows == 0 ? own_rows + 1 : w % own_rows + 1
-            fc = c % own_cols == 0 ? own_cols + 1 : c % own_cols + 1
-            var = update_flow(flow, flow_copy, p_locs, w, c, fr, fc, tc, true)
+        for c in 2:own_cols + 1
+            fr = wave % own_rows == 0 ? own_rows + 1 : wave % own_rows + 1
+            var = update_flow(flow, flow_copy, p_locs, wave, TSC + c - 2, fr, c, tc, true)
             if var > max_var; max_var = var end
+            wf += 1
         end
+        
+        wave += STEPS
     end
+    # if rank == 0; println(" -> p_wavefront at iter = ", iter) end
+    return wf
 end
 
 
@@ -558,8 +558,10 @@ function main()
     p_locs = copy(flow)
 
     start_iter = 0
+    ti = 0
+    wf = 0
 
-    for iter in start_iter:max_iter
+    @time for iter in start_iter:max_iter
 
         if max_var <= threshold
             break
@@ -573,8 +575,12 @@ function main()
     
         copy!(flow_copy, flow)
 
-        p_wavefront(iter, max_var, tunnel_rows, tunnel_cols, own_rows, own_cols, flow, flow_copy, p_locs)
+        wf += p_wavefront(rank, iter, max_var, tunnel_rows, tunnel_cols, own_rows, own_cols, flow, flow_copy, p_locs)
+
+        if rank == 0; ti += 1 end
     end
+
+    if rank == 0; println(" -> total iterations = ",ti,"\n -> total wf = ",wf) end; MPI.Barrier(cart_comm)
 
     recv_flow = MPI.Gather(flow, cart_comm;root=0)
     recv_p_locs = MPI.Gather(p_locs, cart_comm;root=0)
@@ -609,7 +615,7 @@ function main()
             res_p_locs[r, c] > 0 ? result[r, c] = "[$symbol]" : result[r, c] = string(symbol)
         end
 
-        display(result)
+        # display(result)
 
         res = ""
         for r in 1:tunnel_rows
@@ -619,7 +625,7 @@ function main()
             res *= "\n"
         end
     
-        write("restult-mpi.txt", res)
+        write("restult-mpi-$n_ranks.txt", res)
     end
 end
 
